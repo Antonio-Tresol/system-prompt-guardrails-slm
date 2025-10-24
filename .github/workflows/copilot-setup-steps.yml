@@ -27,7 +27,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v1
         with:
-          uv-version: 'latest'
+          version: 'latest'
 
       - name: Install project and dev dependencies
         run: uv sync --all-extras --group dev
