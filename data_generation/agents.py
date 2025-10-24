@@ -4,12 +4,12 @@ This module defines both simple and agentic agents with custom state management
 for LangSmith tracing visibility. Global instances are provided for Studio debugging.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain.agents import AgentState, create_agent
+from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from langgraph.graph.state import CompiledStateGraph
 from typing_extensions import NotRequired
 
 from data_generation.tools import (
@@ -20,9 +20,6 @@ from data_generation.tools import (
     get_next_task,
     save_entity,
 )
-
-if TYPE_CHECKING:
-    from langchain_core.language_models import BaseChatModel
 
 
 class CustomAgentState(AgentState):
@@ -42,7 +39,9 @@ class CustomAgentState(AgentState):
     next_task_id: NotRequired[int]
 
 
-def create_simple_agent(llm: BaseChatModel, system_prompt: str) -> Any:  # noqa: ANN401
+def create_simple_agent(
+    llm: BaseChatModel, system_prompt: str
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a simple agent without tools for direct generation.
 
     Args:
@@ -50,13 +49,15 @@ def create_simple_agent(llm: BaseChatModel, system_prompt: str) -> Any:  # noqa:
         system_prompt: The system prompt for the agent.
 
     Returns:
-        A configured simple agent (CompiledGraph from LangGraph).
+        A configured simple agent (CompiledStateGraph from LangGraph).
     """
     agent = create_agent(llm, [], system_prompt=system_prompt)
     return agent
 
 
-def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> Any:  # noqa: ANN401
+def create_agentic_agent(
+    llm: BaseChatModel, system_prompt: str
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create an agentic agent with tools and custom state for complex generation.
 
     Args:
@@ -64,7 +65,7 @@ def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> Any:  # noqa
         system_prompt: The system prompt for the agent.
 
     Returns:
-        A configured agentic agent with tools and custom state (CompiledGraph).
+        A configured agentic agent with tools and custom state (CompiledStateGraph).
     """
     # Create the critique tool with the LLM
     critique_tool = create_critique_tool(llm)
@@ -95,7 +96,7 @@ def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> Any:  # noqa
 DEFAULT_STUDIO_MODEL = "google/gemini-2.5-pro"
 
 
-def create_studio_simple_agent() -> Any:  # noqa: ANN401
+def create_studio_simple_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a simple agent instance for Studio with default configuration.
 
     Returns:
@@ -120,7 +121,7 @@ def create_studio_simple_agent() -> Any:  # noqa: ANN401
     return create_simple_agent(llm, system_prompt)
 
 
-def create_studio_agentic_agent() -> Any:  # noqa: ANN401
+def create_studio_agentic_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create an agentic agent instance for Studio with default configuration.
 
     Returns:

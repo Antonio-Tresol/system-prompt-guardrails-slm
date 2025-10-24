@@ -13,10 +13,13 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
-from data_generation.agents import create_agentic_agent, create_simple_agent
+from data_generation.agents import (
+    CustomAgentState,
+    create_agentic_agent,
+    create_simple_agent,
+)
 from data_generation.config import Settings
 from data_generation.constants import ALLOWED_MODELS, THEME_POOL
-from data_generation.tools import reset_tools
 
 # Configure logging
 logging.basicConfig(
@@ -119,9 +122,6 @@ def generate_agentic(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
     Returns:
         The generated markdown content.
     """
-    # Reset tool state for fresh generation
-    reset_tools()
-
     # Create enhanced prompt for agentic mode
     filled_prompt = prompt_template.replace("{theme}", theme)
     system_message = f"""You are an AI agent tasked with generating high-quality content.
@@ -143,8 +143,16 @@ final answer."""
     # Create the agent
     agent = create_agentic_agent(llm, system_message)
 
+    # Initialize state with empty stores for agentic mode
+    initial_state: CustomAgentState = {
+        "messages": [HumanMessage(content="Generate the content.")],
+        "consistency_store": {},
+        "todo_list": [],
+        "next_task_id": 1,
+    }
+
     # Run the agent
-    result = agent.invoke({"messages": [HumanMessage(content="Generate the content.")]})
+    result = agent.invoke(initial_state)
 
     # Extract the final message content
     messages = result.get("messages", [])

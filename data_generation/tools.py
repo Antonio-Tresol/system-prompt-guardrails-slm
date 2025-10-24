@@ -1,20 +1,24 @@
-"""Custom tools for the agentic data generation mode.
+"""Custom tools for the agentic data generation mode with state management.
 
 This module provides tools that allow the agent to maintain consistency,
-plan its work, and self-critique its outputs.
+plan its work, and self-critique its outputs. Tools update the agent
+state directly for visibility in LangSmith tracing using Command.
 """
 
-from typing import Any
-
+from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import BaseTool, tool
-
-# In-memory storage for the InternalConsistencyTool
-_consistency_store: dict[str, dict[str, Any]] = {}
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.types import Command
 
 
 @tool
-def save_entity(category: str, name: str, data: str) -> str:
+def save_entity(
+    category: str,
+    name: str,
+    data: str,
+    runtime: ToolRuntime,
+) -> Command:
     """Save an entity to the consistency store for later retrieval.
 
     Use this tool to remember important details like character names, currency,
@@ -25,18 +29,38 @@ def save_entity(category: str, name: str, data: str) -> str:
         category: The category of the entity (e.g., "staff", "currency", "location").
         name: The unique name or identifier of the entity.
         data: The data or description to store for this entity.
+        runtime: Tool runtime providing access to state.
 
     Returns:
-        Confirmation message that the entity was saved.
+        Command to update state with the saved entity.
     """
-    if category not in _consistency_store:
-        _consistency_store[category] = {}
-    _consistency_store[category][name] = data
-    return f"Saved {name} in category {category}."
+    # Get current consistency store from state
+    consistency_store = runtime.state.get("consistency_store", {})
+
+    # Update the consistency store
+    if category not in consistency_store:
+        consistency_store[category] = {}
+    consistency_store[category][name] = data
+
+    # Return command to update state
+    return Command(
+        update={
+            "consistency_store": consistency_store,
+            "messages": [
+                ToolMessage(
+                    f"Saved {name} in category {category}.",
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ],
+        }
+    )
 
 
 @tool
-def get_entities(category: str) -> str:
+def get_entities(
+    category: str,
+    runtime: ToolRuntime,
+) -> str:
     """Retrieve all entities from a specific category.
 
     Use this tool to recall previously saved entities and maintain consistency
@@ -44,25 +68,26 @@ def get_entities(category: str) -> str:
 
     Args:
         category: The category to retrieve entities from.
+        runtime: Tool runtime providing access to state.
 
     Returns:
         A string representation of all entities in that category.
     """
-    if category not in _consistency_store:
+    consistency_store = runtime.state.get("consistency_store", {})
+
+    if category not in consistency_store:
         return f"No entities found in category {category}."
-    entities = _consistency_store[category]
+    entities = consistency_store[category]
     if not entities:
         return f"No entities found in category {category}."
     return "\n".join([f"{name}: {data}" for name, data in entities.items()])
 
 
-# In-memory storage for the TodoListTool
-_todo_list: list[dict[str, Any]] = []
-_next_task_id: int = 1
-
-
 @tool
-def add_task(task_description: str) -> str:
+def add_task(
+    task_description: str,
+    runtime: ToolRuntime,
+) -> Command:
     """Add a new task to the todo list.
 
     Use this tool to break down the document generation into manageable steps
@@ -70,49 +95,112 @@ def add_task(task_description: str) -> str:
 
     Args:
         task_description: Description of the task to add.
+        runtime: Tool runtime providing access to state.
 
     Returns:
-        Confirmation message with the task ID.
+        Command to update state with the new task.
     """
-    global _next_task_id
-    task_id = _next_task_id
-    _next_task_id += 1
-    _todo_list.append({"id": task_id, "description": task_description, "completed": False})
-    return f"Task {task_id} added: {task_description}"
+    # Get current todo list and task ID from state
+    todo_list = runtime.state.get("todo_list", [])
+    next_task_id = runtime.state.get("next_task_id", 1)
+
+    # Add new task
+    task_id = next_task_id
+    todo_list.append(
+        {
+            "id": task_id,
+            "description": task_description,
+            "completed": False,
+        }
+    )
+
+    # Return command to update state
+    return Command(
+        update={
+            "todo_list": todo_list,
+            "next_task_id": next_task_id + 1,
+            "messages": [
+                ToolMessage(
+                    f"Task {task_id} added: {task_description}",
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ],
+        }
+    )
 
 
 @tool
-def get_next_task() -> str:
+def get_next_task(
+    runtime: ToolRuntime,
+) -> str:
     """Get the next incomplete task from the todo list.
 
     Use this tool to see what you should work on next.
 
+    Args:
+        runtime: Tool runtime providing access to state.
+
     Returns:
         The next incomplete task or a message if all tasks are complete.
     """
-    for task in _todo_list:
+    todo_list = runtime.state.get("todo_list", [])
+
+    for task in todo_list:
         if not task["completed"]:
             return f"Task {task['id']}: {task['description']}"
     return "All tasks completed!"
 
 
 @tool
-def complete_task(task_id: int) -> str:
+def complete_task(
+    task_id: int,
+    runtime: ToolRuntime,
+) -> Command:
     """Mark a task as completed.
 
     Use this tool when you finish a task to track your progress.
 
     Args:
         task_id: The ID of the task to mark as complete.
+        runtime: Tool runtime providing access to state.
 
     Returns:
-        Confirmation message or error if task not found.
+        Command to update state with the completed task.
     """
-    for task in _todo_list:
+    todo_list = runtime.state.get("todo_list", [])
+
+    # Find and update the task
+    task_found = False
+    for task in todo_list:
         if task["id"] == task_id:
             task["completed"] = True
-            return f"Task {task_id} marked as complete."
-    return f"Task {task_id} not found."
+            task_found = True
+            break
+
+    if not task_found:
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        f"Task {task_id} not found.",
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ]
+            }
+        )
+
+    # Return command to update state
+    return Command(
+        update={
+            "todo_list": todo_list,
+            "messages": [
+                ToolMessage(
+                    f"Task {task_id} marked as complete.",
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ],
+        }
+    )
 
 
 def create_critique_tool(llm: BaseChatModel) -> BaseTool:
@@ -166,11 +254,3 @@ Your critique:"""
         return str(response)
 
     return critique_draft
-
-
-def reset_tools() -> None:
-    """Reset all tool state (useful for testing or between generations)."""
-    global _consistency_store, _todo_list, _next_task_id
-    _consistency_store = {}
-    _todo_list = []
-    _next_task_id = 1
