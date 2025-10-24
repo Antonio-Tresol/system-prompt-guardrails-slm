@@ -1,0 +1,134 @@
+[project]
+name = "safety-prompts-for-slm"
+version = "0.1.0"
+description = "An experiment setup to test safety prompts for sml"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "pyrefly>=0.38.2",
+    "ruff>=0.14.2",
+]
+
+#####################################################################
+# Ruff Configuration
+#####################################################################
+
+[tool.ruff]
+# Set the max line length to 100
+line-length = 100
+
+# Match your project's `requires-python`
+target-version = "py312"
+
+# Exclude common directories from linting and formatting
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "venv",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# Select all the rules you asked for and more
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes (unused imports, variables, etc.)
+    "I",   # isort (Sorted imports)
+    "ANN", # flake8-annotations (Type hint enforcement)
+    "B",   # flake8-bugbear (Common bugs and bad practices)
+    "SIM", # flake8-simplify (Refactoring suggestions)
+    "C4",  # flake8-comprehensions
+    "D",   # pydocstyle (All docstring rules)
+    "S",   # flake8-bandit (Security rules)
+    "T20", # flake8-print (Flag print statements)
+]
+
+# Ignore specific noisy rules
+ignore = [
+    "T201",   # Ignore `print` statements
+    "D100", # Missing docstring in public module
+    "D101", # Missing docstring in public class
+    "D102", # Missing docstring in public method
+    "D103", # Missing docstring in public function
+    "D104", # Missing docstring in public package
+    "D105", # Missing docstring in magic method
+    "D106", # Missing docstring in public nested class
+    "D107", # Missing docstring in __init__ method
+]
+
+# Auto-fix everything that Ruff can safely fix
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+# Tell Ruff what your project's own module name is
+known-first-party = ["safety_prompts_for_slm"]
+
+[tool.ruff.lint.pydocstyle]
+# Use Google-style docstrings
+convention = "google"
+
+[tool.ruff.format]
+# This enables the Ruff formatter (a replacement for Black)
+# It will add trailing commas by default.
+
+# Use double quotes for strings
+quote-style = "double"
+
+# Set indent style to spaces (width is implicitly 4, the Python default)
+indent-style = "space"
+
+# Format code snippets inside your docstrings
+docstring-code-format = true
+
+[tool.pyrefly]
+# --- No `project-includes` or `search-path` ---
+# Let Pyrefly use its flexible defaults to find your files.
+
+# 2. Define what to ignore
+# This list is still critical for performance
+project-excludes = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "venv",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+]
+
+# 4. Enforce strict stub-checking
+ignore-missing-source = false
+
+# 5. Define behavior for untyped functions
+untyped-def-behavior = "check-and-infer-return-type"
