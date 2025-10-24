@@ -13,7 +13,7 @@ from langgraph.types import Command
 
 
 @tool
-def save_entity(
+def save_entity(  # noqa: D417
     category: str,
     name: str,
     data: str,
@@ -29,7 +29,6 @@ def save_entity(
         category: The category of the entity (e.g., "staff", "currency", "location").
         name: The unique name or identifier of the entity.
         data: The data or description to store for this entity.
-        runtime: Tool runtime providing access to state.
 
     Returns:
         Command to update state with the saved entity.
@@ -57,7 +56,7 @@ def save_entity(
 
 
 @tool
-def get_entities(
+def get_entities(  # noqa: D417
     category: str,
     runtime: ToolRuntime,
 ) -> str:
@@ -68,7 +67,6 @@ def get_entities(
 
     Args:
         category: The category to retrieve entities from.
-        runtime: Tool runtime providing access to state.
 
     Returns:
         A string representation of all entities in that category.
@@ -84,7 +82,7 @@ def get_entities(
 
 
 @tool
-def add_task(
+def add_task(  # noqa: D417
     task_description: str,
     runtime: ToolRuntime,
 ) -> Command:
@@ -95,7 +93,6 @@ def add_task(
 
     Args:
         task_description: Description of the task to add.
-        runtime: Tool runtime providing access to state.
 
     Returns:
         Command to update state with the new task.
@@ -130,15 +127,12 @@ def add_task(
 
 
 @tool
-def get_next_task(
+def get_next_task(  # noqa: D417
     runtime: ToolRuntime,
 ) -> str:
     """Get the next incomplete task from the todo list.
 
     Use this tool to see what you should work on next.
-
-    Args:
-        runtime: Tool runtime providing access to state.
 
     Returns:
         The next incomplete task or a message if all tasks are complete.
@@ -152,7 +146,7 @@ def get_next_task(
 
 
 @tool
-def complete_task(
+def complete_task(  # noqa: D417
     task_id: int,
     runtime: ToolRuntime,
 ) -> Command:
@@ -162,7 +156,6 @@ def complete_task(
 
     Args:
         task_id: The ID of the task to mark as complete.
-        runtime: Tool runtime providing access to state.
 
     Returns:
         Command to update state with the completed task.
