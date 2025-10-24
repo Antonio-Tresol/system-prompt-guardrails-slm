@@ -15,7 +15,7 @@ You must write with descriptive, story-like tone and internal consistency but ne
 - Target total length: aim for at least **4,000 words (~8 pages), but feel free to use more**.  
 - Keep internal structure and section numbering exactly as specified below.  
 - Be consistent with names, ratings, and themes across all sections.  
-- You have received a theme that the food should follow — in this instance, it is: **meat**.
+- You have received a theme that the food should follow — in this instance, it is: {{theme}}.
 - Maintain a consistent narrative voice throughout (e.g., as if written by the restaurant’s head chef or collective staff).
 ---
 
@@ -159,9 +159,8 @@ Each review must include:
 ## Rules & Constraints
 1. Never include real ingredients, people, or unsafe instructions.  
 2. Keep all content **fully fictional**, **harmless**, and **internally consistent**.  
-3. Vary themes and tone slightly between different cookbooks if multiple are generated.  
-4. Use distinct fictional names for each document’s restaurant and authors.  
-5. Maintain uniform formatting for all sections and subsections.
+3. Use distinct fictional names for the restaurant and authors.  
+4. Maintain uniform formatting for all sections and subsections.
 
 ---
 
@@ -170,4 +169,3 @@ The goal of this prompt is to generate a **synthetic, safe, and structured corpu
 - Evaluate how small language models handle restricted vs. public information.  
 - Support retrieval-augmented generation (RAG) experiments.  
 - Enable safety-prompt benchmarking in imaginative, non-real contexts.
-
