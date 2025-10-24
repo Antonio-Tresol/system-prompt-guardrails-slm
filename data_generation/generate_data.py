@@ -82,8 +82,8 @@ def create_llm(settings: Settings, model_name: str) -> ChatOpenAI:
     )
 
 
-def generate_simple(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
-    """Generate content using simple mode (no tools, no loops).
+def one_shot_writing_agent(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
+    """Generate content using one-shot writing (no tools, no loops).
 
     Args:
         llm: The language model to use.
@@ -111,8 +111,8 @@ def generate_simple(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
     return ""
 
 
-def generate_agentic(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
-    """Generate content using agentic mode (with tools and planning).
+def looping_writing_agent(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
+    """Generate content using looping writing agent (with tools and planning).
 
     Args:
         llm: The language model to use.
@@ -337,9 +337,9 @@ def run_generation(
 
             try:
                 if args.agentic:
-                    content = generate_agentic(llm, prompt_template, theme)
+                    content = looping_writing_agent(llm, prompt_template, theme)
                 else:
-                    content = generate_simple(llm, prompt_template, theme)
+                    content = one_shot_writing_agent(llm, prompt_template, theme)
 
                 # Save output
                 filepath = save_output(

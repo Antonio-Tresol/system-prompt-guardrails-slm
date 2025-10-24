@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from typing_extensions import NotRequired
 
+from data_generation.config import Settings
 from data_generation.tools import (
     add_task,
     complete_task,
@@ -39,9 +40,7 @@ class CustomAgentState(AgentState):
     next_task_id: NotRequired[int]
 
 
-def create_simple_agent(
-    llm: BaseChatModel, system_prompt: str
-) -> CompiledStateGraph[Any, Any, Any, Any]:
+def create_simple_agent(llm: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
     """Create a simple agent without tools for direct generation.
 
     Args:
@@ -55,9 +54,7 @@ def create_simple_agent(
     return agent
 
 
-def create_agentic_agent(
-    llm: BaseChatModel, system_prompt: str
-) -> CompiledStateGraph[Any, Any, Any, Any]:
+def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
     """Create an agentic agent with tools and custom state for complex generation.
 
     Args:
@@ -96,14 +93,12 @@ def create_agentic_agent(
 DEFAULT_STUDIO_MODEL = "google/gemini-2.5-pro"
 
 
-def create_studio_simple_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
+def create_studio_simple_agent() -> CompiledStateGraph:
     """Create a simple agent instance for Studio with default configuration.
 
     Returns:
         A simple agent configured for Studio debugging.
     """
-    from data_generation.config import Settings
-
     # Load settings (will need .env file)
     try:
         settings = Settings()  # type: ignore[call-arg]
@@ -121,14 +116,12 @@ def create_studio_simple_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     return create_simple_agent(llm, system_prompt)
 
 
-def create_studio_agentic_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
+def create_studio_agentic_agent() -> CompiledStateGraph:
     """Create an agentic agent instance for Studio with default configuration.
 
     Returns:
         An agentic agent configured for Studio debugging.
     """
-    from data_generation.config import Settings
-
     # Load settings (will need .env file)
     try:
         settings = Settings()  # type: ignore[call-arg]
