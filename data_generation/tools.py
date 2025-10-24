@@ -6,7 +6,8 @@ plan its work, and self-critique its outputs.
 
 from typing import Any
 
-from langchain_core.tools import tool
+from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool, tool
 
 # In-memory storage for the InternalConsistencyTool
 _consistency_store: dict[str, dict[str, Any]] = {}
@@ -114,7 +115,7 @@ def complete_task(task_id: int) -> str:
     return f"Task {task_id} not found."
 
 
-def create_critique_tool(llm: Any) -> Any:  # noqa: ANN401
+def create_critique_tool(llm: BaseChatModel) -> BaseTool:
     """Create a critique tool that uses the provided LLM for self-assessment.
 
     Args:
@@ -157,7 +158,12 @@ Document to review:
 Your critique:"""
 
         response = llm.invoke(critique_prompt)
-        return response.content if hasattr(response, "content") else str(response)
+        if hasattr(response, "content"):
+            content = response.content
+            if isinstance(content, list):
+                return "\n".join(str(item) for item in content)
+            return str(content)
+        return str(response)
 
     return critique_draft
 
