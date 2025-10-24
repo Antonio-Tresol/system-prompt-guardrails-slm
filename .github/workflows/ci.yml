@@ -20,11 +20,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12 with uv caching
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12' 
-          cache: 'uv'
+          python-version: '3.12'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v1
