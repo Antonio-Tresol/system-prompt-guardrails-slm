@@ -94,8 +94,8 @@ convention = "google"
 # Use double quotes for strings
 quote-style = "double"
 
-# Explicitly set indent width to 4 spaces
-indent-width = 4
+# Set indent style to spaces (width is implicitly 4, the Python default)
+indent-style = "space"
 
 # Format code snippets inside your docstrings
 docstring-code-format = true
