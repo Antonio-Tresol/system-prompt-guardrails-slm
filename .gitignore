@@ -217,3 +217,4 @@ __marimo__/
 
 # Data generation outputs
 data_generation/outputs/
+data_generation/prompt_templates/
