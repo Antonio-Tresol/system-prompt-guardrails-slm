@@ -1,0 +1,16 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pin to the same version as your pyproject.toml
+    rev: v0.14.2
+    hooks:
+      - id: ruff-check
+        # Add --fix to auto-fix errors
+        # Add --exit-non-zero-on-fix so you can re-stage changes
+        args: [ --fix, --exit-non-zero-on-fix ]
+      - id: ruff-format
+
+  - repo: https://github.com/facebook/pyrefly-pre-commit
+    # This is a recent tag for the hook repository
+    rev: v0.1.1
+    hooks:
+      - id: pyrefly-typecheck-system

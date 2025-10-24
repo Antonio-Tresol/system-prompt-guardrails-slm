@@ -1,0 +1,49 @@
+name: CI Checks
+
+on:
+  # Run on pull requests targeting the main branch
+  pull_request:
+    branches: [ "main" ]
+  
+  # Also run on pushes to the main branch (e.g., after merging)
+  push:
+    branches: [ "main" ]
+  
+  # Allow you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  lint_and_typecheck:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 with uv caching
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' 
+          cache: 'uv'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          uv-version: 'latest'
+
+      - name: Install project and dev dependencies
+        run: uv sync --all-extras
+        shell: bash
+
+      - name: Run ruff linter
+        # This is the updated line:
+        run: uv run ruff check --output-format=github .
+        shell: bash
+        
+      - name: Run ruff formatter (check mode)
+        run: uv run ruff format --check .
+        shell: bash
+
+      - name: Run pyrefly type checker
+        run: uv run pyrefly check
+        shell: bash
