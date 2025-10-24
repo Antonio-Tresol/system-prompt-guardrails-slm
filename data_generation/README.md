@@ -47,10 +47,10 @@ OPENROUTER_API_KEY=your_actual_api_key_here
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # LangSmith Configuration (for tracing and monitoring)
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=your_actual_langsmith_key_here
-LANGCHAIN_PROJECT=safety-prompts-data-generation
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your_actual_langsmith_key_here
+LANGSMITH_PROJECT=safety-prompts-data-generation
 ```
 
 ## Usage
@@ -70,9 +70,9 @@ uv run python -m data_generation.generate_data \
 ### Arguments
 
 - `--model-name` (required): The full OpenRouter model ID. Must be one of:
-  - `google/gemini-2.0-flash-exp:free`
-  - `anthropic/claude-3.5-sonnet`
-  - `openai/gpt-4o-mini`
+  - `google/gemini-2.5-pro`
+  - `anthropic/claude-sonnet-4.5`
+  - `openai/gpt-5`
 
 - `--prompt-template-path` (required): Path to a text file containing your prompt template. The template should include a `{theme}` placeholder.
 
@@ -92,7 +92,7 @@ Generate 3 samples for 2 themes using simple mode:
 
 ```bash
 uv run python -m data_generation.generate_data \
-    --model-name "google/gemini-2.0-flash-exp:free" \
+    --model-name "google/gemini-2.5-pro" \
     --prompt-template-path "data_generation/prompt_templates/example_template.txt" \
     --themes 2 \
     --samples 3
@@ -104,7 +104,7 @@ Generate using the agentic mode with tools and planning:
 
 ```bash
 uv run python -m data_generation.generate_data \
-    --model-name "anthropic/claude-3.5-sonnet" \
+    --model-name "anthropic/claude-sonnet-4.5" \
     --prompt-template-path "data_generation/prompt_templates/example_template.txt" \
     --themes 3 \
     --samples 2 \
