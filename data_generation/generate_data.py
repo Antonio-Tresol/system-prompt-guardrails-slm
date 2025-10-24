@@ -10,20 +10,13 @@ import random
 from datetime import datetime
 from pathlib import Path
 
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from data_generation.agents import create_agentic_agent, create_simple_agent
 from data_generation.config import Settings
-from data_generation.tools import (
-    add_task,
-    complete_task,
-    create_critique_tool,
-    get_entities,
-    get_next_task,
-    reset_tools,
-    save_entity,
-)
+from data_generation.constants import ALLOWED_MODELS, THEME_POOL
+from data_generation.tools import reset_tools
 
 # Configure logging
 logging.basicConfig(
@@ -31,27 +24,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# List of allowed models
-ALLOWED_MODELS = [
-    "google/gemini-2.5-pro",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5",
-]
-
-# Pool of themes for data generation
-THEME_POOL = [
-    "meat",
-    "vegetables",
-    "spices",
-    "seafood",
-    "dairy",
-    "fruits",
-    "grains",
-    "beverages",
-    "desserts",
-    "condiments",
-]
 
 
 def validate_model_name(model_name: str) -> None:
@@ -119,9 +91,7 @@ def generate_simple(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
         The generated markdown content.
     """
     filled_prompt = prompt_template.replace("{theme}", theme)
-
-    # Create a simple agent without tools
-    agent = create_agent(llm, [], system_prompt=filled_prompt)
+    agent = create_simple_agent(llm, filled_prompt)
 
     # Run the agent
     result = agent.invoke({"messages": [HumanMessage(content="Generate the content.")]})
@@ -152,19 +122,6 @@ def generate_agentic(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
     # Reset tool state for fresh generation
     reset_tools()
 
-    # Create the critique tool with the LLM
-    critique_tool = create_critique_tool(llm)
-
-    # Prepare tools
-    tools = [
-        save_entity,
-        get_entities,
-        add_task,
-        get_next_task,
-        complete_task,
-        critique_tool,
-    ]
-
     # Create enhanced prompt for agentic mode
     filled_prompt = prompt_template.replace("{theme}", theme)
     system_message = f"""You are an AI agent tasked with generating high-quality content.
@@ -183,8 +140,8 @@ Important: Your final answer must be the single, complete Markdown document.
 Do not include any other text, explanations, or tool usage information in your
 final answer."""
 
-    # Create the agent using create_agent
-    agent = create_agent(llm, tools, system_prompt=system_message)
+    # Create the agent
+    agent = create_agentic_agent(llm, system_message)
 
     # Run the agent
     result = agent.invoke({"messages": [HumanMessage(content="Generate the content.")]})
@@ -234,8 +191,12 @@ def save_output(
     return filepath
 
 
-def main() -> None:
-    """Main entry point for the data generation script."""
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Generate synthetic data using LLMs from OpenRouter"
     )
@@ -271,15 +232,27 @@ def main() -> None:
         default="data_generation/outputs",
         help="Base output directory (default: data_generation/outputs)",
     )
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
+def setup_generation(args: argparse.Namespace) -> tuple[Settings, ChatOpenAI, str]:
+    """Set up the generation environment.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Tuple of (settings, llm, prompt_template).
+
+    Raises:
+        SystemExit: If setup fails.
+    """
     # Validate model name
     try:
         validate_model_name(args.model_name)
     except ValueError as e:
         logger.error(str(e))
-        return
+        raise SystemExit(1) from e
 
     # Load settings
     try:
@@ -287,31 +260,53 @@ def main() -> None:
     except Exception as e:
         logger.error("Error loading settings: %s", e)
         logger.error("Make sure you have a .env file in the data_generation/ directory.")
-        return
+        raise SystemExit(1) from e
 
     # Load prompt template
     try:
         prompt_template = load_prompt_template(args.prompt_template_path)
     except FileNotFoundError as e:
         logger.error(str(e))
-        return
+        raise SystemExit(1) from e
 
     # Create LLM
     llm = create_llm(settings, args.model_name)
 
-    # Select random themes
-    if args.themes > len(THEME_POOL):
-        logger.warning("Requested %d themes but only %d available.", args.themes, len(THEME_POOL))
-        selected_themes = THEME_POOL
-    else:
-        selected_themes = random.sample(THEME_POOL, args.themes)
+    return settings, llm, prompt_template
 
-    logger.info("Selected themes: %s", ", ".join(selected_themes))
-    logger.info("Model: %s", args.model_name)
-    logger.info("Mode: %s", "agentic" if args.agentic else "simple")
-    logger.info("Samples per theme: %d", args.samples)
 
-    # Generate content
+def select_themes(num_themes: int) -> list[str]:
+    """Select random themes from the theme pool.
+
+    Args:
+        num_themes: Number of themes to select.
+
+    Returns:
+        List of selected themes.
+    """
+    if num_themes > len(THEME_POOL):
+        logger.warning("Requested %d themes but only %d available.", num_themes, len(THEME_POOL))
+        return THEME_POOL
+    return random.sample(THEME_POOL, num_themes)
+
+
+def run_generation(
+    llm: ChatOpenAI,
+    prompt_template: str,
+    selected_themes: list[str],
+    args: argparse.Namespace,
+) -> int:
+    """Run the data generation process.
+
+    Args:
+        llm: The language model to use.
+        prompt_template: The prompt template.
+        selected_themes: List of themes to process.
+        args: Parsed command-line arguments.
+
+    Returns:
+        Number of files generated.
+    """
     output_dir = Path(args.output_dir)
     mode = "agentic" if args.agentic else "simple"
     total_generations = len(selected_themes) * args.samples
@@ -353,10 +348,33 @@ def main() -> None:
                 logger.error("✗ Error generating sample: %s", e)
                 continue
 
+    return current
+
+
+def main() -> None:
+    """Main entry point for the data generation script."""
+    args = parse_arguments()
+
+    # Setup
+    settings, llm, prompt_template = setup_generation(args)
+
+    # Select themes
+    selected_themes = select_themes(args.themes)
+
+    # Log configuration
+    logger.info("Selected themes: %s", ", ".join(selected_themes))
+    logger.info("Model: %s", args.model_name)
+    logger.info("Mode: %s", "agentic" if args.agentic else "simple")
+    logger.info("Samples per theme: %d", args.samples)
+
+    # Run generation
+    files_generated = run_generation(llm, prompt_template, selected_themes, args)
+
+    # Log completion
     logger.info("=" * 60)
     logger.info("Generation complete!")
-    logger.info("Total files generated: %d", current)
-    logger.info("Output directory: %s", output_dir.absolute())
+    logger.info("Total files generated: %d", files_generated)
+    logger.info("Output directory: %s", Path(args.output_dir).absolute())
     logger.info("=" * 60)
 
 
