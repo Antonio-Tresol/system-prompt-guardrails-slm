@@ -1,244 +1,155 @@
 # Data Generation Pipeline
 
-This directory contains a pipeline for generating synthetic data using various Large Language Models (LLMs) from OpenRouter. The pipeline supports two modes of generation: a simple mode for direct generation and an agentic mode for multi-step, tool-using generation.
+Pipeline for generating synthetic data using models from OpenRouter. Supports two modes: simple (one-shot) and deep-agent (with planning and tools).
 
 ## Project Structure
 
 ```
 data_generation/
-├── __init__.py              # Package initialization
-├── config.py                # Configuration with Pydantic settings
-├── generate_data.py         # Main executable script
-├── tools.py                 # Custom tools for agentic mode
-├── .env.example             # Example environment variables
-├── .env                     # Your actual credentials (git-ignored)
-├── prompt_templates/        # Directory for prompt templates
-│   └── example_template.txt # Example prompt template
-└── outputs/                 # Generated data (git-ignored)
+├── __init__.py
+├── agents.py                # Agent definitions (simple & deep)
+├── config.py                # Pydantic settings for env vars
+├── constants.py             # Model lists, themes, defaults
+├── generate_data.py         # Main CLI script
+├── internal_prompts.py      # System prompt templates
+├── utils.py                 # Helper functions (save, load)
+├── prompts/
+│   └── corpus_prompt.md     # Default data generation prompt
+└── outputs/                 # Generated files (git-ignored)
     └── {model}/
         └── {mode}/
             └── {theme}/
                 └── {theme}_sample_{n}_{timestamp}.md
 ```
 
-## Setup
-
-### 1. Install Dependencies
-
-The required dependencies are already in the project's `pyproject.toml`. Make sure they are installed:
-
-```bash
-uv sync
-```
-
-### 2. Configure Environment Variables
-
-Copy the example environment file and fill in your credentials:
-
-```bash
-cp data_generation/.env.example data_generation/.env
-```
-
-Edit `data_generation/.env` and add your API keys:
-
-```bash
-# OpenRouter Configuration
-OPENROUTER_API_KEY=your_actual_api_key_here
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
-# LangSmith Configuration (for tracing and monitoring)
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=your_actual_langsmith_key_here
-LANGSMITH_PROJECT=safety-prompts-data-generation
-```
-
 ## Usage
 
-### Basic Command Structure
+### Quick Start (with defaults)
 
 ```bash
-uv run python -m data_generation.generate_data \
-    --model-name <model-id> \
-    --prompt-template-path <path-to-template> \
-    [--themes <number>] \
-    [--samples <number>] \
-    [--agentic] \
-    [--output-dir <path>]
+uv run generate_corpus
 ```
 
-### Arguments
+This generates 1 sample with 1 theme using `z-ai/glm-4.6` in simple mode.
 
-- `--model-name` (required): The full OpenRouter model ID. Must be one of:
-  - `google/gemini-2.5-pro`
-  - `anthropic/claude-sonnet-4.5`
-  - `openai/gpt-5`
+### All Arguments (all optional)
 
-- `--prompt-template-path` (required): Path to a text file containing your prompt template. The template should include a `{theme}` placeholder.
+```bash
+uv run generate_corpus \
+    [--model-name MODEL] \
+    [--prompt-template-path PATH] \
+    [--themes N] \
+    [--samples N] \
+    [--deep-agent] \
+    [--output-dir DIR]
+```
 
-- `--themes` (optional): Number of themes to randomly select from the theme pool. Default: 3.
-
-- `--samples` (optional): Number of samples to generate per theme. Default: 3.
-
-- `--agentic` (optional): If set, uses the advanced tool-using agent mode. If not set, uses simple direct generation mode.
-
-- `--output-dir` (optional): Base directory for outputs. Default: `data_generation/outputs`.
+**Arguments:**
+- `--model-name`: OpenRouter model ID (default: `z-ai/glm-4.6`)
+  - Allowed: `z-ai/glm-4.6`, `google/gemini-2.5-pro`, `anthropic/claude-sonnet-4.5`, `openai/gpt-5`
+- `--prompt-template-path`: Path to prompt file (default: `prompts/corpus_prompt.md`)
+- `--themes`: Number of random themes (default: 1)
+- `--samples`: Samples per theme (default: 1)
+- `--deep-agent`: Use Deep Agent mode (default: simple one-shot)
+- `--output-dir`: Output directory (default: `data_generation/outputs`)
 
 ### Examples
 
-#### Simple Mode (Default)
-
-Generate 3 samples for 2 themes using simple mode:
-
+**Simple mode with custom model:**
 ```bash
-uv run python -m data_generation.generate_data \
+uv run generate_corpus \
     --model-name "google/gemini-2.5-pro" \
-    --prompt-template-path "data_generation/prompt_templates/example_template.txt" \
     --themes 2 \
     --samples 3
 ```
 
-#### Agentic Mode
-
-Generate using the agentic mode with tools and planning:
-
+**Deep Agent mode:**
 ```bash
-uv run python -m data_generation.generate_data \
+uv run generate_corpus \
     --model-name "anthropic/claude-sonnet-4.5" \
-    --prompt-template-path "data_generation/prompt_templates/example_template.txt" \
-    --themes 3 \
-    --samples 2 \
-    --agentic
+    --deep-agent
 ```
 
 ## Generation Modes
 
-### Simple Mode (Default)
+### Simple Mode (default)
+- One-shot generation
+- No tools or planning
+- Fast and cost-effective
 
-- **No tools**: Direct generation without intermediate steps
-- **No loops**: Single-pass generation
-- **Fast**: Minimal overhead
-- **Use case**: When you need straightforward, zero-shot generation
+### Deep Agent Mode (`--deep-agent`)
+- Multi-step planning with todo lists
+- File system for managing sections
+- Self-critique subagent for quality review
+- Better for complex, long-form content
 
-### Agentic Mode (`--agentic` flag)
-
-- **With tools**: Agent has access to planning and consistency tools
-- **Multi-step**: Can iterate and refine its output
-- **Self-critique**: Can review and improve its own work
-- **Use case**: When you need higher quality, internally consistent content
-
-#### Available Tools in Agentic Mode
-
-1. **InternalConsistencyTool**
-   - `save_entity(category, name, data)`: Save entities for consistency
-   - `get_entities(category)`: Retrieve saved entities
-   - Use for maintaining consistent names, locations, currencies, etc.
-
-2. **TodoListTool**
-   - `add_task(task_description)`: Add a planning task
-   - `get_next_task()`: Get the next incomplete task
-   - `complete_task(task_id)`: Mark a task as complete
-   - Use for breaking down generation into steps
-
-3. **CritiqueTool**
-   - `critique_draft(draft_markdown)`: Self-review a draft
-   - Uses the same LLM to provide feedback on drafts
-   - Use for improving quality before finalizing
+**Deep Agent Tools:**
+- `write_todos`: Plan document structure
+- `write_file`, `read_file`, `edit_file`, `ls`: Manage content sections
+- `critique_draft`: Get feedback on drafts
 
 ## Theme Pool
 
-The pipeline includes a predefined pool of themes:
-- meat
-- vegetables
-- spices
-- seafood
-- dairy
-- fruits
-- grains
-- beverages
-- desserts
-- condiments
-
-When you specify `--themes N`, the script randomly selects N unique themes from this pool.
+Available themes (randomly selected):
+```
+meat, vegetables, spices, seafood, dairy, fruits, grains, beverages, desserts, condiments, japanese cuisine
+```
 
 ## Prompt Templates
 
-Prompt templates are text files that contain instructions for the LLM. They must include a `{theme}` placeholder that will be replaced with the actual theme during generation.
+Templates must include a `{theme}` placeholder. Example:
 
-### Example Template
+```markdown
+Generate a creative cookbook about {theme}.
 
-```
-Generate a creative and detailed markdown document about {theme}.
-
-Your document should include:
-1. A brief introduction to the topic
-2. At least 3 interesting facts or aspects
-3. A conclusion
-
-Format your response as a well-structured markdown document with appropriate headings and sections.
+Include:
+1. Introduction
+2. At least 3 recipes
+3. Conclusion
 ```
 
 ## Output Structure
 
-Generated files are organized hierarchically:
-
 ```
 outputs/
-└── {model_name}/        # e.g., "google_gemini-2.0-flash-exp_free"
-    └── {mode}/          # "simple" or "agentic"
-        └── {theme}/     # e.g., "vegetables"
+└── {model}/          # e.g., "z-ai_glm-4.6"
+    └── {mode}/       # "simple" or "deep-agent"
+        └── {theme}/  # e.g., "vegetables"
             └── {theme}_sample_{n}_{timestamp}.md
 ```
 
-Each file contains the markdown content generated for that specific theme and sample.
+## Tracing
 
-## Monitoring and Tracing
+All generations are traced to Langfuse for monitoring, debugging, and token analysis.
 
-If you configure LangSmith credentials in your `.env` file, all generations will be traced and logged to LangSmith. This allows you to:
-- Debug generation issues
-- Monitor token usage
-- Analyze agent behavior (in agentic mode)
-- Compare different models and prompts
+## Testing with Studio
 
-## Troubleshooting
+Test agents interactively using Studio:
 
-### "Model not allowed" error
-
-Make sure you're using one of the allowed models listed in the `--model-name` documentation.
-
-### "Prompt template file not found" error
-
-Check that the path to your prompt template is correct and the file exists.
-
-### "Error loading settings" error
-
-Ensure you have created a `.env` file in the `data_generation/` directory with all required credentials.
-
-### Import errors
-
-Make sure all dependencies are installed:
 ```bash
-uv sync
+uv run langgraph dev --allow-blocking
 ```
+
+This starts a local development server at `http://localhost:2024` and opens Studio in your browser. The `--allow-blocking` flag is required for proper `.env` file loading.
+
+Studio provides:
+- Interactive agent testing
+- Step-by-step execution visualization
+- Thread/conversation management
+- Real-time Langfuse tracing
+
+See [LangGraph Studio Tutorial](https://youtu.be/Mi1gSlHwZLM?si=Ow9dnAMNYXX1KcPV&t=74) to get familiar with the interface.
+
+After that, in the UI you will have available 2 agents named:
+    - "data-generation:one_shot_writing_agent"
+    - "data-generation:deep_writing_agent"
+
+In Studio, the deep writing agent expects that you sent the corpus prompt as a message. The one shot agent has the prompt embedded so you can just hit run.
 
 ## Development
 
-To modify or extend the pipeline:
-
-1. **Add new tools**: Edit `tools.py` and add new `@tool` decorated functions
-2. **Add new models**: Update the `ALLOWED_MODELS` list in `generate_data.py`
-3. **Add new themes**: Update the `THEME_POOL` list in `generate_data.py`
-4. **Modify agent behavior**: Edit the system message in the `generate_agentic()` function
-
-Always run the quality checks after making changes:
-
-```bash
-# Auto-fix lint errors
-uv run ruff check --fix .
-
-# Format code
-uv run ruff format .
-
-# Check types
-uv run pyrefly check
-```
+**Modify:**
+- Models: Update `ALLOWED_MODELS` in `constants.py`
+- Themes: Update `THEME_POOL` in `constants.py`
+- Prompts: Edit files in `prompts/` or `internal_prompts.py`
+- Agents: Edit `agents.py`

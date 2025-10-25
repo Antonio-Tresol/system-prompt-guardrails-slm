@@ -16,3 +16,7 @@ Always adhere to the project's quality standards. Before finalizing your work, y
     ```
 
 If `pyrefly check` reports any errors, you must fix them. All new code must be fully type-hinted and follow the Google-style docstring convention as defined in `pyproject.toml`.
+
+This project uses langchain and langgraph heavily. As your knowledge may be outdated, ALWAYS use the langchain mcp server tools to read the latest documentation when touching anything related to langchain or langgraph.
+
+AVOID comments on code that are obvious or redundant. Only add comments when they provide additional context or clarification that is not immediately clear from the code itself. The code should be clean and self-explanatory, like solid principles.

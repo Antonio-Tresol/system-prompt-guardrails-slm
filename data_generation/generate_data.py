@@ -7,19 +7,26 @@ It supports two modes: simple (direct generation) and agentic (with tools).
 import argparse
 import logging
 import random
-from datetime import datetime
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 
 from data_generation.agents import (
-    CustomAgentState,
-    create_agentic_agent,
-    create_simple_agent,
+    create_deep_writing_agent,
+    create_one_shot_writing_agent,
 )
 from data_generation.config import Settings
-from data_generation.constants import ALLOWED_MODELS, THEME_POOL
+from data_generation.constants import (
+    ALLOWED_MODELS,
+    DEFAULT_DATA_GENERATION_PROMPT_TEMPLATE,
+    DEFAULT_MODEL,
+    THEME_POOL,
+)
+from data_generation.internal_prompts import DEEP_AGENT_SYSTEM_PROMPT
+from data_generation.utils import load_prompt_template, save_output
 
 # Configure logging
 logging.basicConfig(
@@ -45,26 +52,7 @@ def validate_model_name(model_name: str) -> None:
         raise ValueError(msg)
 
 
-def load_prompt_template(template_path: str) -> str:
-    """Load a prompt template from a file.
-
-    Args:
-        template_path: Path to the prompt template file.
-
-    Returns:
-        The content of the template file.
-
-    Raises:
-        FileNotFoundError: If the template file does not exist.
-    """
-    path = Path(template_path)
-    if not path.exists():
-        msg = f"Prompt template file not found: {template_path}"
-        raise FileNotFoundError(msg)
-    return path.read_text(encoding="utf-8")
-
-
-def create_llm(settings: Settings, model_name: str) -> ChatOpenAI:
+def create_model(settings: Settings, model_name: str) -> ChatOpenAI:
     """Create and configure the ChatOpenAI instance for OpenRouter.
 
     Args:
@@ -82,22 +70,47 @@ def create_llm(settings: Settings, model_name: str) -> ChatOpenAI:
     )
 
 
-def one_shot_writing_agent(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
+def create_langfuse_handler(settings: Settings) -> CallbackHandler:
+    """Create and configure the Langfuse callback handler.
+
+    Args:
+        settings: The settings object with Langfuse credentials.
+
+    Returns:
+        Configured Langfuse CallbackHandler instance.
+    """
+    # Create Langfuse client with explicit credentials
+    # This initializes the global Langfuse instance that CallbackHandler will use
+    _langfuse_client = Langfuse(  # noqa: F841
+        secret_key=settings.langfuse_secret_key,
+        public_key=settings.langfuse_public_key,
+        host=settings.langfuse_base_url,
+    )
+    # Create callback handler (it will use the global langfuse client automatically)
+    return CallbackHandler()
+
+
+def generate_content_with_one_shot_agent(
+    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+) -> str:
     """Generate content using one-shot writing (no tools, no loops).
 
     Args:
-        llm: The language model to use.
+        model: The  model to use.
         prompt_template: The prompt template with {theme} placeholder.
         theme: The theme to fill into the template.
+        langfuse_handler: The Langfuse callback handler for tracing.
 
     Returns:
         The generated markdown content.
     """
     filled_prompt = prompt_template.replace("{theme}", theme)
-    agent = create_simple_agent(llm, filled_prompt)
+    agent = create_one_shot_writing_agent(model, filled_prompt)
 
     # Run the agent
-    result = agent.invoke({"messages": [HumanMessage(content="Generate the content.")]})
+    result = agent.invoke(
+        {"messages": [HumanMessage(content="Generate the content.")]}, callbacks=[langfuse_handler]
+    )
 
     # Extract content from messages
     messages = result.get("messages", [])
@@ -111,48 +124,31 @@ def one_shot_writing_agent(llm: ChatOpenAI, prompt_template: str, theme: str) ->
     return ""
 
 
-def looping_writing_agent(llm: ChatOpenAI, prompt_template: str, theme: str) -> str:
-    """Generate content using looping writing agent (with tools and planning).
+def generate_content_with_deep_agent(
+    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+) -> str:
+    """Generate content using Deep Agent (with planning, tools, and context management).
 
     Args:
-        llm: The language model to use.
+        model: The model to use.
         prompt_template: The prompt template with {theme} placeholder.
         theme: The theme to fill into the template.
+        langfuse_handler: The Langfuse callback handler for tracing.
 
     Returns:
         The generated markdown content.
     """
-    # Create enhanced prompt for agentic mode
+    # Fill in the theme placeholder - this is the actual task specification
     filled_prompt = prompt_template.replace("{theme}", theme)
-    system_message = f"""You are an AI agent tasked with generating high-quality content.
-You have a maximum of 30 steps to complete your task, but you should be frugal with your actions.
 
-You have access to the following tools:
-- save_entity/get_entities: To maintain consistency in your content
-  (e.g., character names, locations)
-- add_task/get_next_task/complete_task: To plan and track your work
-- critique_draft: To self-review your work before finalizing
+    # Create agent with the system instructions (not the task)
+    agent = create_deep_writing_agent(model, DEEP_AGENT_SYSTEM_PROMPT)
 
-Your task:
-{filled_prompt}
-
-Important: Your final answer must be the single, complete Markdown document.
-Do not include any other text, explanations, or tool usage information in your
-final answer."""
-
-    # Create the agent
-    agent = create_agentic_agent(llm, system_message)
-
-    # Initialize state with empty stores for agentic mode
-    initial_state: CustomAgentState = {
-        "messages": [HumanMessage(content="Generate the content.")],
-        "consistency_store": {},
-        "todo_list": [],
-        "next_task_id": 1,
-    }
-
-    # Run the agent
-    result = agent.invoke(initial_state)
+    # Invoke the agent with the corpus generation requirements as the user message
+    result = agent.invoke(
+        {"messages": [HumanMessage(content=filled_prompt)]},
+        config={"callbacks": [langfuse_handler]},
+    )
 
     # Extract the final message content
     messages = result.get("messages", [])
@@ -161,42 +157,6 @@ final answer."""
         if hasattr(last_message, "content"):
             return str(last_message.content)
     return ""
-
-
-def save_output(
-    content: str,
-    model_name: str,
-    theme: str,
-    sample_num: int,
-    mode: str,
-    output_dir: Path,
-) -> Path:
-    """Save generated content to a structured directory.
-
-    Args:
-        content: The generated content to save.
-        model_name: The model name used for generation.
-        theme: The theme used.
-        sample_num: The sample number.
-        mode: The generation mode (simple or agentic).
-        output_dir: The base output directory.
-
-    Returns:
-        Path to the saved file.
-    """
-    # Create directory structure: output_dir / model / mode / theme /
-    model_safe = model_name.replace("/", "_")
-    theme_dir = output_dir / model_safe / mode / theme
-    theme_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{theme}_sample_{sample_num}_{timestamp}.md"
-    filepath = theme_dir / filename
-
-    # Save content
-    filepath.write_text(content, encoding="utf-8")
-    return filepath
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -210,30 +170,30 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-name",
-        required=True,
-        help="The full OpenRouter model ID",
+        default=DEFAULT_MODEL,
+        help="The full OpenRouter model ID (default: z-ai/glm-4.6)",
     )
     parser.add_argument(
         "--prompt-template-path",
-        required=True,
-        help="Path to the prompt template file",
+        default=str(DEFAULT_DATA_GENERATION_PROMPT_TEMPLATE),
+        help=f"Path to data generation prompt (default: {DEFAULT_DATA_GENERATION_PROMPT_TEMPLATE})",
     )
     parser.add_argument(
         "--themes",
         type=int,
-        default=3,
-        help="Number of themes to randomly select (default: 3)",
+        default=1,
+        help="Number of themes to randomly select (default: 1)",
     )
     parser.add_argument(
         "--samples",
         type=int,
-        default=3,
-        help="Number of samples to generate per theme (default: 3)",
+        default=1,
+        help="Number of samples to generate per theme (default: 1)",
     )
     parser.add_argument(
-        "--agentic",
+        "--deep-agent",
         action="store_true",
-        help="Use agentic mode with tools (default: simple mode)",
+        help="Use Deep Agent mode with planning and tools (default: simple one-shot mode)",
     )
     parser.add_argument(
         "--output-dir",
@@ -243,26 +203,26 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def setup_generation(args: argparse.Namespace) -> tuple[Settings, ChatOpenAI, str]:
+def setup_generation(
+    args: argparse.Namespace,
+) -> tuple[Settings, ChatOpenAI, str, CallbackHandler]:
     """Set up the generation environment.
 
     Args:
         args: Parsed command-line arguments.
 
     Returns:
-        Tuple of (settings, llm, prompt_template).
+        Tuple of (settings, llm, prompt_template, langfuse_handler).
 
     Raises:
         SystemExit: If setup fails.
     """
-    # Validate model name
     try:
         validate_model_name(args.model_name)
     except ValueError as e:
         logger.error(str(e))
         raise SystemExit(1) from e
 
-    # Load settings
     try:
         settings = Settings()  # type: ignore[call-arg]
     except Exception as e:
@@ -270,17 +230,16 @@ def setup_generation(args: argparse.Namespace) -> tuple[Settings, ChatOpenAI, st
         logger.error("Make sure you have a .env file in the data_generation/ directory.")
         raise SystemExit(1) from e
 
-    # Load prompt template
     try:
         prompt_template = load_prompt_template(args.prompt_template_path)
     except FileNotFoundError as e:
         logger.error(str(e))
         raise SystemExit(1) from e
 
-    # Create LLM
-    llm = create_llm(settings, args.model_name)
+    model = create_model(settings, args.model_name)
+    langfuse_handler = create_langfuse_handler(settings)
 
-    return settings, llm, prompt_template
+    return settings, model, prompt_template, langfuse_handler
 
 
 def select_themes(num_themes: int) -> list[str]:
@@ -299,24 +258,26 @@ def select_themes(num_themes: int) -> list[str]:
 
 
 def run_generation(
-    llm: ChatOpenAI,
+    model: ChatOpenAI,
     prompt_template: str,
     selected_themes: list[str],
     args: argparse.Namespace,
+    langfuse_handler: CallbackHandler,
 ) -> int:
     """Run the data generation process.
 
     Args:
-        llm: The language model to use.
+        model: The  model to use.
         prompt_template: The prompt template.
         selected_themes: List of themes to process.
         args: Parsed command-line arguments.
+        langfuse_handler: The Langfuse callback handler for tracing.
 
     Returns:
         Number of files generated.
     """
     output_dir = Path(args.output_dir)
-    mode = "agentic" if args.agentic else "simple"
+    mode = "deep-agent" if args.deep_agent else "simple"
     total_generations = len(selected_themes) * args.samples
     current = 0
 
@@ -336,12 +297,15 @@ def run_generation(
             )
 
             try:
-                if args.agentic:
-                    content = looping_writing_agent(llm, prompt_template, theme)
+                if args.deep_agent:
+                    content = generate_content_with_deep_agent(
+                        model, prompt_template, theme, langfuse_handler
+                    )
                 else:
-                    content = one_shot_writing_agent(llm, prompt_template, theme)
+                    content = generate_content_with_one_shot_agent(
+                        model, prompt_template, theme, langfuse_handler
+                    )
 
-                # Save output
                 filepath = save_output(
                     content,
                     args.model_name,
@@ -363,22 +327,19 @@ def main() -> None:
     """Main entry point for the data generation script."""
     args = parse_arguments()
 
-    # Setup
-    settings, llm, prompt_template = setup_generation(args)
+    settings, model, prompt_template, langfuse_handler = setup_generation(args)
 
-    # Select themes
     selected_themes = select_themes(args.themes)
 
-    # Log configuration
     logger.info("Selected themes: %s", ", ".join(selected_themes))
     logger.info("Model: %s", args.model_name)
-    logger.info("Mode: %s", "agentic" if args.agentic else "simple")
+    logger.info("Mode: %s", "deep-agent" if args.deep_agent else "simple")
     logger.info("Samples per theme: %d", args.samples)
 
-    # Run generation
-    files_generated = run_generation(llm, prompt_template, selected_themes, args)
+    files_generated = run_generation(
+        model, prompt_template, selected_themes, args, langfuse_handler
+    )
 
-    # Log completion
     logger.info("=" * 60)
     logger.info("Generation complete!")
     logger.info("Total files generated: %d", files_generated)
