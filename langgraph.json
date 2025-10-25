@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "simple_agent": "./data_generation/agents.py:simple_agent_studio",
+    "agentic_agent": "./data_generation/agents.py:agentic_agent_studio"
+  },
+  "env": "data_generation/.env"
+}
