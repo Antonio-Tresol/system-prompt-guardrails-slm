@@ -1,88 +1,90 @@
 """Agent definitions for data generation pipeline.
 
-This module defines both simple and agentic agents with custom state management
-for LangSmith tracing visibility. Global instances are provided for Studio debugging.
+This module defines both simple and agentic agents.
+- Simple agent: One-shot generation without tools
+- Agentic agent: Uses Deep Agents with planning, tools, and context management
 """
 
-from typing import Any
-
-from langchain.agents import AgentState, create_agent
+from deepagents import create_deep_agent
+from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 from langgraph.graph.state import CompiledStateGraph
-from typing_extensions import NotRequired
 
 from data_generation.config import Settings
-from data_generation.tools import (
-    add_task,
-    complete_task,
-    create_critique_tool,
-    get_entities,
-    get_next_task,
-    save_entity,
+from data_generation.constants import (
+    DEFAULT_DATA_GENERATION_PROMPT_TEMPLATE,
+    DEFAULT_MODEL,
+    DEFAULT_THEME,
 )
+from data_generation.internal_prompts import DEEP_AGENT_SYSTEM_PROMPT
+from data_generation.utils import load_prompt_template
+
+# Critique Subagent Definition
+# Used by create_deep_writing_agent to provide feedback on generated content
+CRITIQUE_SUBAGENT = {
+    "name": "critique_draft",
+    "description": (
+        "Use this subagent to review and critique your draft content. "
+        "It will provide feedback on completeness, consistency, tone, and quality. "
+        "Send the general requirements and the draft content to be reviewed."
+    ),
+    "system_prompt": (
+        "You are a critical reviewer. Review the provided content and give "
+        "constructive feedback.\n\n"
+        "Check for:\n"
+        "1. Completeness: Is all required information present?\n"
+        "2. Consistency: Are there any contradictions or inconsistencies?\n"
+        "3. Tone: Is the tone appropriate for the content?\n"
+        "4. Quality: Is the content well-written and engaging?\n\n"
+        "Provide specific, actionable feedback that the writer can use to improve "
+        "their work."
+    ),
+    "tools": [],
+}
 
 
-class CustomAgentState(AgentState):
-    """Custom agent state with consistency store and todo list for tracking.
-
-    Extends the base AgentState with additional fields for maintaining
-    consistency and task tracking that are visible in LangSmith tracing.
-
-    Attributes:
-        consistency_store: Dictionary storing entities by category for consistency.
-        todo_list: List of tasks for planning and workflow management.
-        next_task_id: Counter for generating unique task IDs.
-    """
-
-    consistency_store: NotRequired[dict[str, dict[str, Any]]]
-    todo_list: NotRequired[list[dict[str, Any]]]
-    next_task_id: NotRequired[int]
-
-
-def create_simple_agent(llm: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
+def create_one_shot_writing_agent(model: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
     """Create a simple agent without tools for direct generation.
 
     Args:
-        llm: The language model to use.
+        model: The  model to use.
         system_prompt: The system prompt for the agent.
 
     Returns:
         A configured simple agent (CompiledStateGraph from LangGraph).
     """
-    agent = create_agent(llm, [], system_prompt=system_prompt)
+    agent = create_agent(model=model, system_prompt=system_prompt, name="one_shot_writing_agent")
     return agent
 
 
-def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
-    """Create an agentic agent with tools and custom state for complex generation.
+def create_deep_writing_agent(model: BaseChatModel, system_prompt: str) -> CompiledStateGraph:
+    """Create a Deep Agent with planning, tools, and context management.
+
+    This uses the deepagents library to create an agent with:
+    - Built-in planning (TodoListMiddleware)
+    - File system for context management (FilesystemMiddleware)
+    - Critique subagent for self-assessment
 
     Args:
-        llm: The language model to use.
+        model: The model to use.
         system_prompt: The system prompt for the agent.
 
     Returns:
-        A configured agentic agent with tools and custom state (CompiledStateGraph).
+        A configured Deep Agent (CompiledStateGraph).
     """
-    # Create the critique tool with the LLM
-    critique_tool = create_critique_tool(llm)
-
-    # Prepare tools
-    tools = [
-        save_entity,
-        get_entities,
-        add_task,
-        get_next_task,
-        complete_task,
-        critique_tool,
-    ]
-
-    # Create the agent with custom state schema
-    agent = create_agent(
-        llm,
-        tools,
+    # Create a Deep Agent with built-in planning and filesystem tools
+    # The agent automatically gets:
+    # - write_todos tool (planning)
+    # - ls, read_file, write_file, edit_file (filesystem)
+    # Plus our critique subagent
+    agent = create_deep_agent(
+        model=model,
+        subagents=[CRITIQUE_SUBAGENT],  # type: ignore[arg-type]
         system_prompt=system_prompt,
-        state_schema=CustomAgentState,
+        name="deep_writing_agent",
     )
 
     return agent
@@ -90,69 +92,57 @@ def create_agentic_agent(llm: BaseChatModel, system_prompt: str) -> CompiledStat
 
 # Global instances for LangGraph Studio debugging
 # Default model for Studio testing
-DEFAULT_STUDIO_MODEL = "google/gemini-2.5-pro"
 
 
-def create_studio_simple_agent() -> CompiledStateGraph:
+def _create_studio_model_and_tracer() -> tuple[ChatOpenAI, CallbackHandler]:
+    """Create a model instance with Langfuse tracing for Studio.
+
+    Returns:
+        Tuple of (model, langfuse_handler) configured for tracing.
+    """
+    settings = Settings()  # type: ignore[call-arg]
+    model = ChatOpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+        model=DEFAULT_MODEL,
+        temperature=0.7,
+    )
+    # Initialize Langfuse for tracing
+    _langfuse_client = Langfuse(  # noqa: F841
+        secret_key=settings.langfuse_secret_key,
+        public_key=settings.langfuse_public_key,
+        host=settings.langfuse_base_url,
+    )
+    langfuse_handler = CallbackHandler(public_key=settings.langfuse_public_key)
+    return model, langfuse_handler
+
+
+def create_one_shot_writing_agent_for_studio() -> CompiledStateGraph:
     """Create a simple agent instance for Studio with default configuration.
 
     Returns:
-        A simple agent configured for Studio debugging.
+        A simple agent configured for Studio debugging with Langfuse tracing.
     """
-    # Load settings (will need .env file)
-    try:
-        settings = Settings()  # type: ignore[call-arg]
-        llm = ChatOpenAI(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            model=DEFAULT_STUDIO_MODEL,
-            temperature=0.7,
-        )
-    except Exception:
-        # Fallback for Studio without .env
-        llm = ChatOpenAI(model=DEFAULT_STUDIO_MODEL, temperature=0.7)
-
-    system_prompt = "You are a helpful assistant that generates high-quality content."
-    return create_simple_agent(llm, system_prompt)
+    model, langfuse_handler = _create_studio_model_and_tracer()
+    system_prompt = load_prompt_template(
+        DEFAULT_DATA_GENERATION_PROMPT_TEMPLATE,
+        theme=DEFAULT_THEME,
+    )
+    agent = create_one_shot_writing_agent(model, system_prompt)
+    return agent.with_config(callbacks=[langfuse_handler])
 
 
-def create_studio_agentic_agent() -> CompiledStateGraph:
-    """Create an agentic agent instance for Studio with default configuration.
+def create_deep_writing_agent_for_studio() -> CompiledStateGraph:
+    """Create a Deep Agent instance for Studio with default configuration.
+
+    For interactive testing in Studio, you should send the corpus generation
+    requirements as a user message when you start the chat. The agent is
+    configured with system instructions only.
 
     Returns:
-        An agentic agent configured for Studio debugging.
+        A Deep Agent configured for Studio debugging with Langfuse tracing.
     """
-    # Load settings (will need .env file)
-    try:
-        settings = Settings()  # type: ignore[call-arg]
-        llm = ChatOpenAI(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            model=DEFAULT_STUDIO_MODEL,
-            temperature=0.7,
-        )
-    except Exception:
-        # Fallback for Studio without .env
-        llm = ChatOpenAI(model=DEFAULT_STUDIO_MODEL, temperature=0.7)
-
-    system_prompt = """You are an AI agent tasked with generating high-quality content.
-You have a maximum of 30 steps to complete your task, but you should be frugal with your actions.
-
-You have access to the following tools:
-- save_entity/get_entities: To maintain consistency in your content
-  (e.g., character names, locations)
-- add_task/get_next_task/complete_task: To plan and track your work
-- critique_draft: To self-review your work before finalizing
-
-Your final answer must be the single, complete Markdown document.
-Do not include any other text, explanations, or tool usage information in your
-final answer."""
-
-    return create_agentic_agent(llm, system_prompt)
-
-
-# Create global instances for Studio
-# Note: These are lazy-loaded functions. Call them to get the agent instances.
-# Example: agent = simple_agent_studio()
-simple_agent_studio = create_studio_simple_agent
-agentic_agent_studio = create_studio_agentic_agent
+    model, langfuse_handler = _create_studio_model_and_tracer()
+    # Use the system prompt as pure instructions, not embedded with corpus task
+    agent = create_deep_writing_agent(model, DEEP_AGENT_SYSTEM_PROMPT)
+    return agent.with_config(callbacks=[langfuse_handler])

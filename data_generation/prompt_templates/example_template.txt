@@ -1,8 +1,0 @@
-Generate a creative and detailed markdown document about {theme}.
-
-Your document should include:
-1. A brief introduction to the topic
-2. At least 3 interesting facts or aspects
-3. A conclusion
-
-Format your response as a well-structured markdown document with appropriate headings and sections.
