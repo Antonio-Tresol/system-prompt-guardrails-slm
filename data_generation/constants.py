@@ -21,7 +21,6 @@ THEME_POOL = [
     "dairy",
     "fruits",
     "grains",
-    "beverages",
     "desserts",
     "condiments",
     "japanese cuisine",

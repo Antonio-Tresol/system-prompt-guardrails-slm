@@ -92,8 +92,6 @@ def create_deep_writing_agent(model: BaseChatModel, system_prompt: str) -> Compi
 
 # Global instances for LangGraph Studio debugging
 # Default model for Studio testing
-
-
 def _create_studio_model_and_tracer() -> tuple[ChatOpenAI, CallbackHandler]:
     """Create a model instance with Langfuse tracing for Studio.
 
