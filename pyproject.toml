@@ -5,14 +5,25 @@ description = "An experiment setup to test safety prompts for sml"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "deepagents>=0.1.4",
     "langchain>=1.0.2",
+    "langchain-openai>=1.0.1",
+    "langfuse>=3.8.1",
+    "pydantic-settings>=2.11.0",
 ]
 
 [dependency-groups]
 dev = [
+    "langgraph-cli[inmem]>=0.1.55",
     "pyrefly>=0.38.2",
     "ruff>=0.14.2",
 ]
+
+[project.scripts]
+generate_corpus = "data_generation.generate_data:main"
+
+[tool.uv]
+package = true
 
 #####################################################################
 # Ruff Configuration

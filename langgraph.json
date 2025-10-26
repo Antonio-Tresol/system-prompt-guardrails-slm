@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "data-generation:one_shot_writing_agent": "./data_generation/agents.py:create_one_shot_writing_agent_for_studio",
+    "data-generation:deep_writing_agent": "./data_generation/agents.py:create_deep_writing_agent_for_studio"
+  },
+  "env": ".env"
+}

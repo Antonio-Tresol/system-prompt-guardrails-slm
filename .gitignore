@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.langgraph_api/
 
 # C extensions
 *.so
@@ -214,3 +215,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data generation outputs
+data_generation/outputs/
+data_generation/prompt_templates/
