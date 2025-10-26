@@ -92,7 +92,7 @@ uv run generate_corpus \
 
 Available themes (randomly selected):
 ```
-meat, vegetables, spices, seafood, dairy, fruits, grains, beverages, desserts, condiments, japanese cuisine
+meat, vegetables, spices, seafood, dairy, fruits, grains, desserts, condiments, japanese cuisine
 ```
 
 ## Prompt Templates

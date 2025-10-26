@@ -87,7 +87,7 @@ def create_langfuse_handler(settings: Settings) -> CallbackHandler:
         host=settings.langfuse_base_url,
     )
     # Create callback handler (it will use the global langfuse client automatically)
-    return CallbackHandler()
+    return CallbackHandler(public_key=settings.langfuse_public_key)
 
 
 def generate_content_with_one_shot_agent(
@@ -109,7 +109,8 @@ def generate_content_with_one_shot_agent(
 
     # Run the agent
     result = agent.invoke(
-        {"messages": [HumanMessage(content="Generate the content.")]}, callbacks=[langfuse_handler]
+        {"messages": [HumanMessage(content="Generate the content.")]},
+        config={"callbacks": [langfuse_handler]},
     )
 
     # Extract content from messages
