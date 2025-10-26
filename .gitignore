@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .langgraph_api/
 
+.vscode/
 # C extensions
 *.so
 
