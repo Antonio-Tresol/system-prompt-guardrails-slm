@@ -10,16 +10,23 @@ data_generation/
 ├── agents.py                # Agent definitions (simple & deep)
 ├── config.py                # Pydantic settings for env vars
 ├── constants.py             # Model lists, themes, defaults
-├── generate_data.py         # Main CLI script
+├── generate_data.py         # Main CLI entrypoint
 ├── internal_prompts.py      # System prompt templates
 ├── utils.py                 # Helper functions (save, load)
-├── prompts/
+├── README.md                # Project overview and usage guide
+│
+├── prompts/                 
 │   └── corpus_prompt.md     # Default data generation prompt
-└── outputs/                 # Generated files (git-ignored)
-    └── {model}/
-        └── {mode}/
-            └── {theme}/
-                └── {theme}_sample_{n}_{timestamp}.md
+│
+├── questions/               # Evaluation questions
+│
+├── synthetic_data/          # Generated synthetic corpora
+│   ├── Brine_&_Riddle_A_Luminous_Cookbook_of_Tideborn_Fare.md
+│   ├── The_Carnelian_Table_A_Culinary_Chronicle.md
+│   ├── The_Moonlit_Granary_A_Cookbook_of_Grains.md
+│   └── The_Velvet_Hourglass_A_Cookbook_of_Sweet_Mysteries.md
+│
+└── outputs/                 # Git-ignored directory for new generated runs
 ```
 
 ## Usage
