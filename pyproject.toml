@@ -10,6 +10,7 @@ dependencies = [
     "docling>=2.61.0",
     "langchain>=1.0.2",
     "langchain-chroma>=1.0.0",
+    "langchain-community>=0.3.12",
     "langchain-openai>=1.0.1",
     "langfuse>=3.8.1",
     "langgraph>=1.0.2",
@@ -30,6 +31,9 @@ generate_corpus = "data_generation.generate_data:main"
 
 [tool.uv]
 package = true
+
+[tool.setuptools]
+packages = ["data_generation", "knowledge_base"]
 
 #####################################################################
 # Ruff Configuration
