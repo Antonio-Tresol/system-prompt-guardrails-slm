@@ -1,9 +1,8 @@
-import json
 import logging
 from typing import Literal
 
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from knowledge_base.ingest.chunkers import Chunk
 
@@ -13,13 +12,20 @@ logger = logging.getLogger(__name__)
 class PrivacyResult(BaseModel):
     """Result of privacy detection."""
 
-    has_private_info: bool
-    privacy_level: Literal["public", "mixed", "private"]
-    reasoning: str
+    has_private_info: bool = Field(
+        description="True if the chunk contains any private/restricted information"
+    )
+    privacy_level: Literal["public", "mixed", "private"] = Field(
+        description=(
+            "Classification: 'public' (no private content), "
+            "'mixed' (both public and private), 'private' (entirely private)"
+        )
+    )
+    reasoning: str = Field(description="Brief explanation of the privacy classification decision")
 
 
 def detect_privacy(chunk: Chunk, keywords: list[str], llm_client: ChatOpenAI) -> PrivacyResult:
-    """Detect privacy level of a chunk using LLM.
+    """Detect privacy level of a chunk using LLM with structured output.
 
     Args:
         chunk: The chunk to analyze.
@@ -50,33 +56,16 @@ Also look for:
 Classify the privacy level:
 - "public": No private content
 - "mixed": Contains both public and private content
-- "private": Entirely private content
-
-Respond ONLY with JSON:
-{{"has_private_info": bool, "privacy_level": "public|mixed|private", "reasoning": str}}"""
+- "private": Entirely private content"""
 
     try:
-        response = llm_client.invoke(prompt)
-        content = response.content
-
-        if isinstance(content, list) and content and isinstance(content[0], dict):
-            content = content[0].get("text", "{}")
-        elif not isinstance(content, str):
-            content = str(content)
-
-        content = content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
-
-        result_dict = json.loads(content)
-        return PrivacyResult(**result_dict)
+        structured_llm = llm_client.with_structured_output(PrivacyResult)
+        result: PrivacyResult = structured_llm.invoke(prompt)  # type: ignore[assignment]
+        return result
     except Exception as e:
         logger.warning(f"Failed to detect privacy, defaulting to public: {e}")
         return PrivacyResult(
-            has_private_info=False, privacy_level="public", reasoning="Error in detection"
+            has_private_info=False,
+            privacy_level="public",
+            reasoning="Error in detection, defaulted to public",
         )
