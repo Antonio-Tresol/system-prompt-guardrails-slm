@@ -33,8 +33,9 @@ build_knowledge_base = "knowledge_base.main:main"
 [tool.uv]
 package = true
 
-[tool.setuptools]
-packages = ["data_generation", "knowledge_base"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data_generation*", "knowledge_base*"]
 
 #####################################################################
 # Ruff Configuration

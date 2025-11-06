@@ -32,12 +32,18 @@ def main() -> None:
 
     logger.info("Starting knowledge base ingestion")
 
-    vector_db_path = Path(settings.paths.vector_db)
     source_docs_path = Path(settings.paths.source_documents)
 
     file_tracker = FileTracker(settings.paths.file_tracker)
 
-    if vector_db_path.exists() and (vector_db_path / "chroma.sqlite3").exists():
+    chroma_store = ChromaStore(
+        persist_directory=settings.paths.vector_db,
+        embeddings_model=settings.embeddings.model,
+        openrouter_api_key=settings.openrouter_api_key,
+        openrouter_base_url=settings.openrouter_base_url,
+    )
+
+    if chroma_store.collection_exists():
         unprocessed = file_tracker.get_unprocessed_files(source_docs_path)
         if not unprocessed:
             logger.info("✅ Vector DB is up-to-date")
@@ -47,13 +53,6 @@ def main() -> None:
         logger.info("Creating new vector database")
         unprocessed = list(source_docs_path.rglob("*.md")) + list(source_docs_path.rglob("*.pdf"))
         logger.info(f"Found {len(unprocessed)} documents to process")
-
-    chroma_store = ChromaStore(
-        persist_directory=settings.paths.vector_db,
-        embeddings_model=settings.embeddings.model,
-        openrouter_api_key=settings.openrouter_api_key,
-        openrouter_base_url=settings.openrouter_base_url,
-    )
 
     llm_client = ChatOpenAI(
         model=settings.llm.model,
