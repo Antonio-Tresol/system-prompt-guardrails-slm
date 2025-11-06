@@ -1,0 +1,184 @@
+import logging
+from pathlib import Path
+from typing import Any, TypedDict
+
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
+from knowledge_base.config.settings import Settings
+from knowledge_base.ingest.chunkers import Chunk, chunk_document
+from knowledge_base.ingest.loaders import load_markdown, load_pdf
+from knowledge_base.ingest.metadata_extractor import extract_metadata
+from knowledge_base.ingest.privacy_detector import PrivacyResult, detect_privacy
+from knowledge_base.schemas.chunk_metadata import ChunkMetadata
+from knowledge_base.utils.file_tracker import FileTracker
+from knowledge_base.vectordb.chroma_store import ChromaStore
+
+logger = logging.getLogger(__name__)
+
+
+class IngestionState(TypedDict):
+    """State for document ingestion pipeline."""
+
+    file_path: str
+    document: Any | None  # noqa: ANN401
+    chunks: list[Chunk]
+    privacy_results: list[PrivacyResult]
+    metadatas: list[ChunkMetadata]
+    errors: list[str]
+    settings: Settings
+    chroma_store: ChromaStore
+    file_tracker: FileTracker
+    llm_client: ChatOpenAI
+
+
+def load_document_node(state: IngestionState) -> IngestionState:
+    """Load document from file path."""
+    file_path = Path(state["file_path"])
+
+    try:
+        if file_path.suffix.lower() == ".md":
+            doc = load_markdown(file_path)
+        elif file_path.suffix.lower() == ".pdf":
+            doc = load_pdf(file_path)
+        else:
+            state["errors"].append(f"Unsupported file type: {file_path.suffix}")
+            return state
+
+        state["document"] = doc
+        logger.info(f"Successfully loaded {file_path}")
+    except Exception as e:
+        state["errors"].append(f"Failed to load {file_path}: {e}")
+        logger.error(f"Failed to load {file_path}: {e}")
+
+    return state
+
+
+def chunk_document_node(state: IngestionState) -> IngestionState:
+    """Chunk the loaded document."""
+    if state["document"] is None:
+        return state
+
+    try:
+        chunks = chunk_document(
+            state["document"],
+            state["settings"].chunking.max_chunk_size,
+            state["settings"].chunking.min_chunk_size,
+        )
+        state["chunks"] = chunks
+        logger.info(f"Created {len(chunks)} chunks")
+    except Exception as e:
+        state["errors"].append(f"Failed to chunk document: {e}")
+        logger.error(f"Failed to chunk document: {e}")
+
+    return state
+
+
+def detect_privacy_node(state: IngestionState) -> IngestionState:
+    """Detect privacy level for each chunk."""
+    if not state["chunks"]:
+        return state
+
+    privacy_results: list[PrivacyResult] = []
+
+    for chunk in state["chunks"]:
+        try:
+            result = detect_privacy(chunk, state["settings"].private_keywords, state["llm_client"])
+            privacy_results.append(result)
+        except Exception as e:
+            logger.warning(f"Privacy detection failed for chunk, using default: {e}")
+            privacy_results.append(
+                PrivacyResult(
+                    has_private_info=False,
+                    privacy_level="public",
+                    reasoning="Error in detection",
+                )
+            )
+
+    state["privacy_results"] = privacy_results
+    logger.info(f"Detected privacy for {len(privacy_results)} chunks")
+
+    return state
+
+
+def extract_metadata_node(state: IngestionState) -> IngestionState:
+    """Extract metadata for each chunk."""
+    if not state["chunks"] or not state["privacy_results"]:
+        return state
+
+    file_path = Path(state["file_path"])
+    document_title = file_path.stem.replace("_", " ")
+
+    metadatas: list[ChunkMetadata] = []
+
+    for idx, (chunk, privacy_result) in enumerate(
+        zip(state["chunks"], state["privacy_results"], strict=False)
+    ):
+        try:
+            metadata = extract_metadata(chunk, privacy_result, idx, document_title, str(file_path))
+            metadatas.append(metadata)
+        except Exception as e:
+            logger.error(f"Failed to extract metadata for chunk {idx}: {e}")
+
+    state["metadatas"] = metadatas
+    logger.info(f"Extracted metadata for {len(metadatas)} chunks")
+
+    return state
+
+
+def embed_and_store_node(state: IngestionState) -> IngestionState:
+    """Embed chunks and store in ChromaDB."""
+    if not state["chunks"] or not state["metadatas"]:
+        return state
+
+    try:
+        texts = [chunk.text for chunk in state["chunks"]]
+        ids = [f"{state['file_path']}_{idx}" for idx in range(len(state["chunks"]))]
+
+        success_count = state["chroma_store"].add_chunks(texts, state["metadatas"], ids)
+
+        if success_count > 0:
+            file_path = Path(state["file_path"])
+            state["file_tracker"].track_file(file_path, file_path.stat().st_mtime)
+            logger.info(f"Successfully stored {success_count} chunks for {state['file_path']}")
+    except Exception as e:
+        state["errors"].append(f"Failed to store chunks: {e}")
+        logger.error(f"Failed to store chunks: {e}")
+
+    return state
+
+
+def create_ingestion_pipeline(
+    settings: Settings,
+    chroma_store: ChromaStore,
+    file_tracker: FileTracker,
+    llm_client: ChatOpenAI,
+) -> CompiledStateGraph:
+    """Create LangGraph ingestion pipeline.
+
+    Args:
+        settings: Configuration settings.
+        chroma_store: ChromaDB store instance.
+        file_tracker: File tracker instance.
+        llm_client: LLM client for privacy detection.
+
+    Returns:
+        Compiled LangGraph pipeline.
+    """
+    workflow: StateGraph = StateGraph(IngestionState)
+
+    workflow.add_node("load_document", load_document_node)  # type: ignore[arg-type]
+    workflow.add_node("chunk_document", chunk_document_node)  # type: ignore[arg-type]
+    workflow.add_node("detect_privacy", detect_privacy_node)  # type: ignore[arg-type]
+    workflow.add_node("extract_metadata", extract_metadata_node)  # type: ignore[arg-type]
+    workflow.add_node("embed_and_store", embed_and_store_node)  # type: ignore[arg-type]
+
+    workflow.add_edge(START, "load_document")
+    workflow.add_edge("load_document", "chunk_document")
+    workflow.add_edge("chunk_document", "detect_privacy")
+    workflow.add_edge("detect_privacy", "extract_metadata")
+    workflow.add_edge("extract_metadata", "embed_and_store")
+    workflow.add_edge("embed_and_store", END)
+
+    return workflow.compile()

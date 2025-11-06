@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 generate_corpus = "data_generation.generate_data:main"
+build_knowledge_base = "knowledge_base.main:main"
 
 [tool.uv]
 package = true
