@@ -80,19 +80,16 @@ class Settings(BaseSettings):
 
         private_keywords = cls._load_private_keywords(paths.pdf_private_config)
 
-        temp_settings = cls.model_validate({})
-        settings = cls(
-            openrouter_api_key=temp_settings.openrouter_api_key,
-            openrouter_base_url=temp_settings.openrouter_base_url,
-            paths=paths,
-            embeddings=embeddings,
-            llm=llm_config,
-            chunking=chunking,
-            logging=logging_config,
-            private_keywords=private_keywords,
-        )
+        settings_dict = {
+            "paths": paths,
+            "embeddings": embeddings,
+            "llm": llm_config,
+            "chunking": chunking,
+            "logging": logging_config,
+            "private_keywords": private_keywords,
+        }
 
-        return settings
+        return cls(**settings_dict)
 
     @staticmethod
     def _load_private_keywords(private_config_path: str) -> list[str]:

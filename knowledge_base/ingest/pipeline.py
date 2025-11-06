@@ -38,13 +38,14 @@ def load_document_node(state: IngestionState) -> IngestionState:
     file_path = Path(state["file_path"])
 
     try:
-        if file_path.suffix.lower() == ".md":
-            doc = load_markdown(file_path)
-        elif file_path.suffix.lower() == ".pdf":
-            doc = load_pdf(file_path)
-        else:
-            state["errors"].append(f"Unsupported file type: {file_path.suffix}")
-            return state
+        match file_path.suffix.lower():
+            case ".md":
+                doc = load_markdown(file_path)
+            case ".pdf":
+                doc = load_pdf(file_path)
+            case _:
+                state["errors"].append(f"Unsupported file type: {file_path.suffix}")
+                return state
 
         state["document"] = doc
         logger.info(f"Successfully loaded {file_path}")
