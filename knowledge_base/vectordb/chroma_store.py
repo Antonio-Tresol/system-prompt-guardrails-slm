@@ -46,6 +46,8 @@ class ChromaStore:
             persist_directory=str(self.persist_directory),
         )
 
+        self._client = chromadb.PersistentClient(path=str(self.persist_directory))
+
     def add_chunks(self, texts: list[str], metadatas: list[ChunkMetadata], ids: list[str]) -> int:
         """Add chunks to the vector store.
 
@@ -75,8 +77,7 @@ class ChromaStore:
             True if collection exists, False otherwise.
         """
         try:
-            client = chromadb.PersistentClient(path=str(self.persist_directory))
-            collections = client.list_collections()
+            collections = self._client.list_collections()
             return any(c.name == self.collection_name for c in collections)
         except Exception:
             return False
@@ -88,8 +89,7 @@ class ChromaStore:
             Dictionary with collection statistics.
         """
         try:
-            client = chromadb.PersistentClient(path=str(self.persist_directory))
-            collection = client.get_collection(name=self.collection_name)
+            collection = self._client.get_collection(name=self.collection_name)
             count = collection.count()
 
             return {
