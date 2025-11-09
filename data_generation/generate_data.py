@@ -84,7 +84,10 @@ def create_langfuse_handler(settings: Settings) -> CallbackHandler:
 
 
 def generate_content_with_one_shot_agent(
-    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+    model: ChatOpenAI,
+    prompt_template: str,
+    theme: str,
+    langfuse_handler: CallbackHandler,
 ) -> str:
     """Generate content using one-shot writing (no tools, no loops).
 
@@ -119,7 +122,10 @@ def generate_content_with_one_shot_agent(
 
 
 def generate_content_with_deep_agent(
-    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+    model: ChatOpenAI,
+    prompt_template: str,
+    theme: str,
+    langfuse_handler: CallbackHandler,
 ) -> str:
     """Generate content using Deep Agent (with planning, tools, and context management).
 
@@ -160,7 +166,7 @@ def parse_arguments() -> argparse.Namespace:
         Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description="Generate synthetic data using Models from OpenRouter"
+        description="Generate synthetic data using Models from OpenRouter",
     )
     parser.add_argument(
         "--model-name",
@@ -293,11 +299,17 @@ def run_generation(
             try:
                 if args.deep_agent:
                     content = generate_content_with_deep_agent(
-                        model, prompt_template, theme, langfuse_handler
+                        model,
+                        prompt_template,
+                        theme,
+                        langfuse_handler,
                     )
                 else:
                     content = generate_content_with_one_shot_agent(
-                        model, prompt_template, theme, langfuse_handler
+                        model,
+                        prompt_template,
+                        theme,
+                        langfuse_handler,
                     )
 
                 filepath = save_output(
@@ -334,7 +346,11 @@ def main() -> None:
     logger.info("Samples per theme: %d", args.samples)
 
     files_generated = run_generation(
-        model, prompt_template, selected_themes, args, langfuse_handler
+        model,
+        prompt_template,
+        selected_themes,
+        args,
+        langfuse_handler,
     )
 
     logger.info("=" * 60)
