@@ -1,9 +1,8 @@
-import logging
 from pathlib import Path
 
 from docling.document_converter import DocumentConverter
 
-logger = logging.getLogger(__name__)
+from utils.logging import logger
 
 
 def load_markdown(path: Path) -> object:

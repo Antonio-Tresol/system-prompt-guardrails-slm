@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -14,8 +13,7 @@ from knowledge_base.ingest.privacy_detector import PrivacyResult, detect_privacy
 from knowledge_base.schemas.chunk_metadata import ChunkMetadata
 from knowledge_base.utils.file_tracker import FileTracker
 from knowledge_base.vectordb.chroma_store import ChromaStore
-
-logger = logging.getLogger(__name__)
+from utils.logging import logger
 
 
 class IngestionState(TypedDict):

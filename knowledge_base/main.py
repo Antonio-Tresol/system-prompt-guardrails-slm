@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -7,28 +6,13 @@ from knowledge_base.config.settings import Settings
 from knowledge_base.ingest.pipeline import create_ingestion_pipeline
 from knowledge_base.utils.file_tracker import FileTracker
 from knowledge_base.vectordb.chroma_store import ChromaStore
-
-
-def setup_logging(level: str) -> logging.Logger:
-    """Setup logging configuration.
-
-    Args:
-        level: Logging level (INFO, DEBUG, etc.).
-
-    Returns:
-        Configured logger.
-    """
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    return logging.getLogger(__name__)
+from utils.logging import logger, setup_logging
 
 
 def main() -> None:
     """Build and populate vector database."""
     settings = Settings.load_from_yaml()
-    logger = setup_logging(settings.logging.level)
+    setup_logging(level=settings.logging.level, log_file="knowledge_base.log")
 
     logger.info("Starting knowledge base ingestion")
 

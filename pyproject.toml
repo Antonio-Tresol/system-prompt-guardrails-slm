@@ -14,6 +14,7 @@ dependencies = [
     "langchain-openai>=1.0.1",
     "langfuse>=3.8.1",
     "langgraph>=1.0.2",
+    "loguru>=0.7.3",
     "pydantic-settings>=2.11.0",
     "pyyaml>=6.0.3",
     "tiktoken>=0.12.0",
@@ -37,7 +38,7 @@ package = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["data_generation*", "knowledge_base*"]
+include = ["data_generation*", "knowledge_base*", "utils*"]
 
 #####################################################################
 # Ruff Configuration

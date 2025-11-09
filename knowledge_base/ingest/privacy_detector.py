@@ -1,12 +1,10 @@
-import logging
 from typing import Literal
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from knowledge_base.ingest.chunkers import Chunk
-
-logger = logging.getLogger(__name__)
+from utils.logging import logger
 
 
 class PrivacyResult(BaseModel):
