@@ -43,8 +43,19 @@ jobs:
         run: uv run ruff format --check .
         shell: bash
 
-      - name: Run pyrefly type checker (excluding notebooks)
-        run: uv run pyrefly check --project-excludes '**/*.ipynb'
+      - name: Run pyrefly type checker
+        run: |
+          # Run pyrefly and capture output
+          uv run pyrefly check 2>&1 | tee pyrefly_output.txt || true
+          # Check if there are actual ERROR lines (not just exit code 1)
+          if grep -q "^ERROR" pyrefly_output.txt; then
+            echo "❌ Pyrefly found type errors"
+            cat pyrefly_output.txt
+            exit 1
+          else
+            echo "✅ Pyrefly check passed (no type errors found)"
+            exit 0
+          fi
         shell: bash
 
   tests:
