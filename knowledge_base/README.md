@@ -5,10 +5,11 @@ A local ChromaDB-based vector database with rich metadata for RAG applications. 
 ## Features
 
 - **Document Types**: Markdown (`.md`) and PDF (`.pdf`) with OCR support via Docling
-- **Privacy Detection**: LLM-based classification of public, mixed, and private content
+- **Privacy Detection**: agent-based classification of public, mixed, and private content
 - **Rich Metadata**: Includes section hierarchy, privacy levels, token counts, character indices
 - **Incremental Updates**: Only processes new or modified documents
-- **OpenRouter Integration**: Uses OpenRouter for embeddings and LLM privacy detection
+- **OpenRouter Integration**: Uses OpenRouter for embeddings and agent-based privacy detection
+- **LangGraph Pipeline**: Orchestrates document processing with state management
 
 ## Quick Start
 
@@ -60,10 +61,10 @@ paths:
   file_tracker: "./knowledge_base/vectordb/file_tracker.json"
 
 embeddings:
-  model: "google/gemini-embedding-001"
+  model: "openai/text-embedding-3-small"
 
-llm:
-  model: "minimax/minimax-m2:free"
+model:
+  name: "openai/gpt-4o-mini"
   temperature: 0.0
 
 chunking:
@@ -83,19 +84,25 @@ Defines keywords indicating private content in documents.
 ```
 knowledge_base/
 ├── config/              # Configuration files and settings
+│   ├── config.yaml      # Main configuration
+│   ├── pdf_private_sections.yaml  # Privacy keywords
+│   └── settings.py      # Pydantic settings loader
 ├── schemas/             # Pydantic data models
+│   └── chunk_metadata.py  # ChunkMetadata schema
 ├── ingest/              # Document processing pipeline
-│   ├── loaders.py       # Docling document loaders
-│   ├── chunkers.py      # Native chunking
-│   ├── privacy_detector.py  # LLM privacy classification
+│   ├── loaders.py       # Docling document loaders (MD & PDF)
+│   ├── chunkers.py      # HybridChunker with OpenAI tokenizer
+│   ├── privacy_detector.py  # LangChain agent privacy classification
 │   ├── metadata_extractor.py  # Metadata extraction
-│   └── pipeline.py      # LangGraph orchestration
+│   └── pipeline.py      # LangGraph StateGraph orchestration
 ├── vectordb/            # ChromaDB operations
+│   ├── chroma_store.py  # Vector store wrapper
+│   └── file_tracker.json  # Tracks processed files
 ├── utils/               # Utility functions
+│   └── file_tracker.py  # File tracking utilities
 └── main.py              # Entry point
+└── explore_knowledge_base.ipynb to run evals on the retrieval 
 ```
-
-## Metadata Schema
 
 Each chunk stores rich metadata:
 
@@ -141,27 +148,70 @@ for doc in results:
 
 ## Privacy Detection
 
-The system uses an LLM to classify each chunk as:
+The system uses an **agent** with structured output to classify each chunk as:
 - **Public**: No private content
 - **Mixed**: Contains both public and private content
 - **Private**: Entirely private content
 
+The agent uses `create_agent` with:
+- **Model**: OpenRouter-hosted `gpt-4o-mini`
+- **Response Format**: `PrivacyResult` Pydantic model
+- **No Tools**: Simple classification task without external tool calls
+
 Private indicators include:
 - Explicit markers ("Restricted Section", "Internal", "Secret")
 - Methodology sections in research papers
-- Internal financial data
-- Staff information
+- Internal financial data (salaries, costs)
+- Staff information or conflicts of interest
 
 ## Development
 
-Run quality checks:
-```bash
-uv run ruff check --fix .
-uv run ruff format .
-uv run pyrefly check
-```
+### Quality Checks
 
-## Testing
+Run all quality checks before committing:
 ```bash
+# Auto-fix lint errors
+uv run ruff check --fix .
+
+# Auto-format and sort imports
+uv run ruff format .
+
+# Type checking
+uv run pyrefly check
+
+# Run tests
 uv run pytest tests/knowledge_base/
 ```
+
+
+## Testing
+
+### Unit Tests
+```bash
+# Run all unit tests
+uv run pytest tests/knowledge_base/test_ingest.py tests/knowledge_base/test_config_and_schemas.py tests/knowledge_base/test_storage.py -v
+```
+
+### Integration Tests
+Integration tests require `OPENROUTER_API_KEY` environment variable:
+```bash
+# Load environment and run integration tests
+$env:OPENROUTER_API_KEY = (Get-Content .env | Select-String "OPENROUTER_API_KEY" | ForEach-Object { $_.ToString().Split('=')[1].Trim() })
+uv run pytest tests/knowledge_base/test_integration.py -v
+```
+
+**Coverage:**
+- Document loading (Markdown & PDF)
+- Chunking with HybridChunker
+- Privacy detection with LangChain agent
+- Metadata extraction
+- ChromaDB storage
+- End-to-end pipeline (Markdown & PDF)
+
+## Chunking Strategy
+
+Uses **Docling's HybridChunker** with explicit tokenizer configuration:
+- **Tokenizer**: `tiktoken` with `cl100k_base` encoding (OpenAI standard)
+- **Max Tokens**: 1000 (configurable)
+- **Min Tokens**: 100 (configurable)
+- **Merge Peers**: `True` for better context preservation

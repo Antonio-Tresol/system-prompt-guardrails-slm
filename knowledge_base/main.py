@@ -68,7 +68,7 @@ def main() -> None:
             "settings": settings,
             "chroma_store": chroma_store,
             "file_tracker": file_tracker,
-            "Model_client": model,
+            "model": model,
         }
 
         result = pipeline.invoke(initial_state)
@@ -86,4 +86,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Ingestion interrupted by user")
+    except Exception as e:
+        logger.error(f"❌ Ingestion failed: {e}")
