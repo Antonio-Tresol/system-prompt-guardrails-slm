@@ -48,7 +48,11 @@ class ChromaStore:
         self._client = chromadb.PersistentClient(path=str(self.persist_directory))
 
     def add_chunks(
-        self, *, texts: list[str], metadatas: list[ChunkMetadata], ids: list[str]
+        self,
+        *,
+        texts: list[str],
+        metadatas: list[ChunkMetadata],
+        ids: list[str],
     ) -> int:
         """Add chunks to the vector store.
 

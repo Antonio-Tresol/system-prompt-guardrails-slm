@@ -1,6 +1,8 @@
 from typing import Any
 
+import tiktoken
 from docling.chunking import HybridChunker
+from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
 from pydantic import BaseModel
 
 
@@ -29,8 +31,15 @@ def chunk_document(
     Returns:
         List of chunks with text and positional metadata.
     """
-    chunker = HybridChunker(
+    # Use tiktoken with OpenAI tokenizer for consistent tokenization
+    tokenizer = OpenAITokenizer(
+        tokenizer=tiktoken.get_encoding("cl100k_base"),
         max_tokens=max_chunk_size,
+    )
+
+    chunker = HybridChunker(
+        tokenizer=tokenizer,
+        merge_peers=True,
     )
 
     chunks: list[Chunk] = []
@@ -49,7 +58,7 @@ def chunk_document(
                 char_start=0,
                 char_end=len(chunk_text),
                 meta=meta_dict,
-            )
+            ),
         )
 
     return chunks

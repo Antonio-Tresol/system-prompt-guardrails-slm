@@ -160,3 +160,8 @@ uv run ruff check --fix .
 uv run ruff format .
 uv run pyrefly check
 ```
+
+## Testing
+```bash
+uv run pytest tests/knowledge_base/
+```

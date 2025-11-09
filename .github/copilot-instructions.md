@@ -19,6 +19,11 @@ uv run ruff format .
 uv run pyrefly check
 ```
 
+### 4. Run Tests to Ensure Functionality and Integrity
+```bash
+uv run pytest
+```
+
 > **Important**: If `pyrefly check` reports any errors, you must fix them before finalizing your work.
 
 ---
@@ -53,11 +58,12 @@ uv run pyrefly check
 This project uses **LangChain** and **LangGraph** heavily.
 
 - **ALWAYS** use the LangChain MCP server tools to read the latest documentation when touching anything related to LangChain or LangGraph
-- If you receive links, **ALWAYS** use the MCP server tools to read the content let that be with Docs by Lanchain tools or with the fetch webcontent tool.
+- If you receive links, **ALWAYS** use the MCP server tools to read the content of the link.
 
 ---
 
 ## Testing Standards
+All code should be covered by tests. Tests should verify the correctness and robustness of the codebase, we should aim for high quality tests, making sure that they validate the correctness of the code under various scenarios. We should avoid superficial tests. Also, tests should be easy to understand and maintain.
 
 ### Testing Framework
 - Use **pytest** for all tests

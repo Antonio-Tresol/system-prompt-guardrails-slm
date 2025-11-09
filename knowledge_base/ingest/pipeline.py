@@ -84,7 +84,9 @@ def detect_privacy_node(state: IngestionState) -> IngestionState:
     for chunk in state["chunks"]:
         try:
             result = detect_privacy(
-                chunk=chunk, keywords=state["settings"].private_keywords, model=state["model"]
+                chunk=chunk,
+                keywords=state["settings"].private_keywords,
+                model=state["model"],
             )
             privacy_results.append(result)
         except Exception as e:
@@ -94,7 +96,7 @@ def detect_privacy_node(state: IngestionState) -> IngestionState:
                     has_private_info=False,
                     privacy_level="public",
                     reasoning="Error in detection",
-                )
+                ),
             )
 
     state["privacy_results"] = privacy_results
@@ -114,7 +116,11 @@ def extract_metadata_node(state: IngestionState) -> IngestionState:
     metadatas: list[ChunkMetadata] = []
 
     for idx, (chunk, privacy_result) in enumerate(
-        zip(state["chunks"], state["privacy_results"], strict=False)
+        zip(
+            state["chunks"],
+            state["privacy_results"],
+            strict=False,
+        ),
     ):
         try:
             metadata = extract_metadata(
@@ -144,7 +150,9 @@ def embed_and_store_node(state: IngestionState) -> IngestionState:
         ids = [f"{state['file_path']}_{idx}" for idx in range(len(state["chunks"]))]
 
         success_count = state["chroma_store"].add_chunks(
-            texts=texts, metadatas=state["metadatas"], ids=ids
+            texts=texts,
+            metadatas=state["metadatas"],
+            ids=ids,
         )
 
         if success_count > 0:
