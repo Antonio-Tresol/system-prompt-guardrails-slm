@@ -40,7 +40,7 @@ class FileTracker:
         except Exception as e:
             logger.error(f"Failed to save tracker file: {e}")
 
-    def track_file(self, path: Path, timestamp: float) -> None:
+    def track_file(self, *, path: Path, timestamp: float) -> None:
         """Track a file with its modification timestamp.
 
         Args:

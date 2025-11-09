@@ -15,6 +15,7 @@ class ChromaStore:
 
     def __init__(
         self,
+        *,
         persist_directory: str,
         collection_name: str = "knowledge_base",
         embeddings_model: str = "google/gemini-embedding-001",
@@ -48,7 +49,9 @@ class ChromaStore:
 
         self._client = chromadb.PersistentClient(path=str(self.persist_directory))
 
-    def add_chunks(self, texts: list[str], metadatas: list[ChunkMetadata], ids: list[str]) -> int:
+    def add_chunks(
+        self, *, texts: list[str], metadatas: list[ChunkMetadata], ids: list[str]
+    ) -> int:
         """Add chunks to the vector store.
 
         Args:

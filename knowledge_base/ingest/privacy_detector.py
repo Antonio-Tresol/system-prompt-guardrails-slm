@@ -24,13 +24,13 @@ class PrivacyResult(BaseModel):
     reasoning: str = Field(description="Brief explanation of the privacy classification decision")
 
 
-def detect_privacy(chunk: Chunk, keywords: list[str], llm_client: ChatOpenAI) -> PrivacyResult:
-    """Detect privacy level of a chunk using LLM with structured output.
+def detect_privacy(*, chunk: Chunk, keywords: list[str], model: ChatOpenAI) -> PrivacyResult:
+    """Detect privacy level of a chunk using model with structured output.
 
     Args:
         chunk: The chunk to analyze.
         keywords: List of private keywords for context.
-        llm_client: OpenRouter LLM client.
+        model: OpenRouter model client.
 
     Returns:
         Privacy detection result.
@@ -59,8 +59,8 @@ Classify the privacy level:
 - "private": Entirely private content"""
 
     try:
-        structured_llm = llm_client.with_structured_output(PrivacyResult)
-        result: PrivacyResult = structured_llm.invoke(prompt)  # type: ignore[assignment]
+        structured_model = model.with_structured_output(PrivacyResult)
+        result: PrivacyResult = structured_model.invoke(prompt)  # type: ignore[assignment]
         return result
     except Exception as e:
         logger.warning(f"Failed to detect privacy, defaulting to public: {e}")

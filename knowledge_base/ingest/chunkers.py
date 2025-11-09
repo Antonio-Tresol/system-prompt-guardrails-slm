@@ -14,6 +14,7 @@ class Chunk(BaseModel):
 
 
 def chunk_document(
+    *,
     doc: Any,  # noqa: ANN401
     max_chunk_size: int,
     min_chunk_size: int,

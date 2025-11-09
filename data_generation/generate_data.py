@@ -1,6 +1,6 @@
 """Main script for data generation pipeline.
 
-This script generates synthetic data using various LLMs from OpenRouter.
+This script generates synthetic data using various Models from OpenRouter.
 It supports two modes: simple (direct generation) and agentic (with tools).
 """
 
@@ -167,7 +167,7 @@ def parse_arguments() -> argparse.Namespace:
         Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description="Generate synthetic data using LLMs from OpenRouter"
+        description="Generate synthetic data using Models from OpenRouter"
     )
     parser.add_argument(
         "--model-name",
@@ -213,7 +213,7 @@ def setup_generation(
         args: Parsed command-line arguments.
 
     Returns:
-        Tuple of (settings, llm, prompt_template, langfuse_handler).
+        Tuple of (settings, Model, prompt_template, langfuse_handler).
 
     Raises:
         SystemExit: If setup fails.

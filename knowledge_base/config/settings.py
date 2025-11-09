@@ -20,10 +20,10 @@ class EmbeddingsConfig(BaseSettings):
     model: str
 
 
-class LLMConfig(BaseSettings):
-    """LLM configuration."""
+class ModelConfig(BaseSettings):
+    """Model configuration."""
 
-    model: str
+    name: str
     temperature: float
 
 
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     paths: PathsConfig
     embeddings: EmbeddingsConfig
-    llm: LLMConfig
+    model: ModelConfig
     chunking: ChunkingConfig
     logging: LoggingConfig
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
         paths = PathsConfig(**config_data["paths"])
         embeddings = EmbeddingsConfig(**config_data["embeddings"])
-        llm_config = LLMConfig(**config_data["llm"])
+        model_config = ModelConfig(**config_data["model"])
         chunking = ChunkingConfig(**config_data["chunking"])
         logging_config = LoggingConfig(**config_data["logging"])
 
@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         settings_dict = {
             "paths": paths,
             "embeddings": embeddings,
-            "llm": llm_config,
+            "model": model_config,
             "chunking": chunking,
             "logging": logging_config,
             "private_keywords": private_keywords,
