@@ -5,10 +5,10 @@ paths:
   file_tracker: "./knowledge_base/vectordb/file_tracker.json"
 
 embeddings:
-  model: "google/gemini-embedding-001"
+  model: "openai/text-embedding-3-small"
 
-llm:
-  model: "minimax/minimax-m2:free"
+model:
+  name: "openai/gpt-5-mini"
   temperature: 0.0
 
 chunking:

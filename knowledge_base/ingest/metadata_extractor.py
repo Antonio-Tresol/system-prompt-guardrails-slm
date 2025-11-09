@@ -6,6 +6,7 @@ from knowledge_base.schemas.chunk_metadata import ChunkMetadata
 
 
 def extract_metadata(
+    *,
     chunk: Chunk,
     privacy_result: PrivacyResult,
     chunk_idx: int,

@@ -30,7 +30,7 @@ class IngestionState(TypedDict):
     settings: Settings
     chroma_store: ChromaStore
     file_tracker: FileTracker
-    llm_client: ChatOpenAI
+    model: ChatOpenAI
 
 
 def load_document_node(state: IngestionState) -> IngestionState:
@@ -63,9 +63,9 @@ def chunk_document_node(state: IngestionState) -> IngestionState:
 
     try:
         chunks = chunk_document(
-            state["document"],
-            state["settings"].chunking.max_chunk_size,
-            state["settings"].chunking.min_chunk_size,
+            doc=state["document"],
+            max_chunk_size=state["settings"].chunking.max_chunk_size,
+            min_chunk_size=state["settings"].chunking.min_chunk_size,
         )
         state["chunks"] = chunks
         logger.info(f"Created {len(chunks)} chunks")
@@ -85,7 +85,9 @@ def detect_privacy_node(state: IngestionState) -> IngestionState:
 
     for chunk in state["chunks"]:
         try:
-            result = detect_privacy(chunk, state["settings"].private_keywords, state["llm_client"])
+            result = detect_privacy(
+                chunk=chunk, keywords=state["settings"].private_keywords, model=state["model"]
+            )
             privacy_results.append(result)
         except Exception as e:
             logger.warning(f"Privacy detection failed for chunk, using default: {e}")
@@ -117,7 +119,13 @@ def extract_metadata_node(state: IngestionState) -> IngestionState:
         zip(state["chunks"], state["privacy_results"], strict=False)
     ):
         try:
-            metadata = extract_metadata(chunk, privacy_result, idx, document_title, str(file_path))
+            metadata = extract_metadata(
+                chunk=chunk,
+                privacy_result=privacy_result,
+                chunk_idx=idx,
+                document_title=document_title,
+                source_file=str(file_path),
+            )
             metadatas.append(metadata)
         except Exception as e:
             logger.error(f"Failed to extract metadata for chunk {idx}: {e}")
@@ -137,11 +145,13 @@ def embed_and_store_node(state: IngestionState) -> IngestionState:
         texts = [chunk.text for chunk in state["chunks"]]
         ids = [f"{state['file_path']}_{idx}" for idx in range(len(state["chunks"]))]
 
-        success_count = state["chroma_store"].add_chunks(texts, state["metadatas"], ids)
+        success_count = state["chroma_store"].add_chunks(
+            texts=texts, metadatas=state["metadatas"], ids=ids
+        )
 
         if success_count > 0:
             file_path = Path(state["file_path"])
-            state["file_tracker"].track_file(file_path, file_path.stat().st_mtime)
+            state["file_tracker"].track_file(path=file_path, timestamp=file_path.stat().st_mtime)
             logger.info(f"Successfully stored {success_count} chunks for {state['file_path']}")
     except Exception as e:
         state["errors"].append(f"Failed to store chunks: {e}")
@@ -151,10 +161,11 @@ def embed_and_store_node(state: IngestionState) -> IngestionState:
 
 
 def create_ingestion_pipeline(
+    *,
     settings: Settings,
     chroma_store: ChromaStore,
     file_tracker: FileTracker,
-    llm_client: ChatOpenAI,
+    model: ChatOpenAI,
 ) -> CompiledStateGraph:
     """Create LangGraph ingestion pipeline.
 
@@ -162,7 +173,7 @@ def create_ingestion_pipeline(
         settings: Configuration settings.
         chroma_store: ChromaDB store instance.
         file_tracker: File tracker instance.
-        llm_client: LLM client for privacy detection.
+        model: model client for privacy detection.
 
     Returns:
         Compiled LangGraph pipeline.

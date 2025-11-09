@@ -54,9 +54,9 @@ def main() -> None:
         unprocessed = list(source_docs_path.rglob("*.md")) + list(source_docs_path.rglob("*.pdf"))
         logger.info(f"Found {len(unprocessed)} documents to process")
 
-    llm_client = ChatOpenAI(
-        model=settings.llm.model,
-        temperature=settings.llm.temperature,
+    model = ChatOpenAI(
+        model=settings.model.name,
+        temperature=settings.model.temperature,
         api_key=settings.openrouter_api_key,
         base_url=settings.openrouter_base_url,
     )
@@ -65,7 +65,7 @@ def main() -> None:
         settings=settings,
         chroma_store=chroma_store,
         file_tracker=file_tracker,
-        llm_client=llm_client,
+        model=model,
     )
 
     success_count = 0
@@ -84,7 +84,7 @@ def main() -> None:
             "settings": settings,
             "chroma_store": chroma_store,
             "file_tracker": file_tracker,
-            "llm_client": llm_client,
+            "Model_client": model,
         }
 
         result = pipeline.invoke(initial_state)
