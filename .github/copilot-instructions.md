@@ -20,3 +20,7 @@ If `pyrefly check` reports any errors, you must fix them. All new code must be f
 This project uses langchain and langgraph heavily. As your knowledge may be outdated, ALWAYS use the langchain mcp server tools to read the latest documentation when touching anything related to langchain or langgraph.
 
 AVOID comments on code that are obvious or redundant. Only add comments when they provide additional context or clarification that is not immediately clear from the code itself. The code should be clean and self-explanatory, like solid principles.
+
+if you receive links, ALWAYS use the mcp server tools to read the content of the links, as your knowledge may be outdated.
+
+We prefer to say "model" over LLM in code and comments, even when referring to large language models.
