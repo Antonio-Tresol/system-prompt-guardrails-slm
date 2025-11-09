@@ -149,6 +149,7 @@ project-excludes = [
     "build",
     "dist",
     "node_modules",
+    "**/*.ipynb",  # Exclude all notebooks - runtime context differs from static analysis
 ]
 # Enforce strict stub-checking
 ignore-missing-source = false

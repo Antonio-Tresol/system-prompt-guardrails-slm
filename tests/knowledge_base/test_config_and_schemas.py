@@ -67,7 +67,7 @@ class TestSettings:
             )
 
         # Act: Load settings from YAML
-        settings = Settings.load_from_yaml(str(config_file))
+        settings = Settings.load_from_yaml(config_path=str(config_file))
 
         # Assert: Verify all settings loaded correctly
         assert settings.paths.source_documents == "./data"
