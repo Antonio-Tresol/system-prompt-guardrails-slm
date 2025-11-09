@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import chromadb
@@ -6,8 +5,7 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 
 from knowledge_base.schemas.chunk_metadata import ChunkMetadata
-
-logger = logging.getLogger(__name__)
+from utils.logging import logger
 
 
 class ChromaStore:

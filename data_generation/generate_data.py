@@ -5,7 +5,6 @@ It supports two modes: simple (direct generation) and agentic (with tools).
 """
 
 import argparse
-import logging
 import random
 from pathlib import Path
 
@@ -27,13 +26,7 @@ from data_generation.constants import (
 )
 from data_generation.internal_prompts import DEEP_AGENT_SYSTEM_PROMPT
 from data_generation.utils import load_prompt_template, save_output
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+from utils.logging import logger, setup_logging
 
 
 def validate_model_name(model_name: str) -> None:
@@ -326,6 +319,9 @@ def run_generation(
 
 def main() -> None:
     """Main entry point for the data generation script."""
+    # Setup logging
+    setup_logging(level="INFO", log_file="data_generation.log")
+
     args = parse_arguments()
 
     settings, model, prompt_template, langfuse_handler = setup_generation(args)
