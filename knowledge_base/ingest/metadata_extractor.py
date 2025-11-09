@@ -31,18 +31,24 @@ def extract_metadata(
     words = chunk.text.split()
     num_words = len(words)
 
-    section = chunk.meta.get("doc_items", [{}])[0].get("label", "Unknown Section")
-    if isinstance(section, list):
-        section = section[0] if section else "Unknown Section"
+    # Extract section from headings (most reliable)
+    headings = chunk.meta.get("headings", [])
+    if headings and isinstance(headings, list):
+        # Use the last heading as the most specific section
+        section = headings[-1] if headings else "Unknown Section"
+    else:
+        section = "Unknown Section"
 
+    # Subsection can be extracted if there are multiple headings
     subsection = None
-    if len(chunk.meta.get("doc_items", [])) > 1:
-        subsection = chunk.meta.get("doc_items", [{}])[1].get("label")
+    if len(headings) > 2:
+        subsection = headings[-2]
 
-    page_number = chunk.meta.get("origin", {}).get("page_number")
-    heading_level = (
-        chunk.meta.get("headings", [{}])[0].get("level") if chunk.meta.get("headings") else None
-    )
+    origin = chunk.meta.get("origin")
+    page_number = origin.get("page_number") if isinstance(origin, dict) else None
+
+    # Heading level based on number of headings (depth)
+    heading_level = len(headings) if headings else None
 
     return ChunkMetadata(
         document_title=document_title,

@@ -43,13 +43,13 @@ Staff salary: $50,000
 
         chroma_store = ChromaStore(
             persist_directory=str(vector_db_dir),
-            embeddings_model=os.getenv("EMBEDDINGS_MODEL", "google/gemini-embedding-001"),
+            embeddings_model=os.getenv("EMBEDDINGS_MODEL", "openai/text-embedding-3-small"),
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
             openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         )
 
         llm_client = ChatOpenAI(
-            model=os.getenv("LLM_MODEL", "minimax/minimax-m2:free"),
+            model=os.getenv("LLM_MODEL", "openai/gpt-4o-mini"),
             temperature=0.0,
             api_key=os.getenv("OPENROUTER_API_KEY", ""),
             base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
@@ -73,9 +73,9 @@ Staff salary: $50,000
                 pdf_private_config="",
                 file_tracker=str(tracker_file),
             ),
-            embeddings=EmbeddingsConfig(model="google/gemini-embedding-001"),
-            llm=LLMConfig(model="minimax/minimax-m2:free", temperature=0.0),
-            chunking=ChunkingConfig(max_chunk_size=1000, min_chunk_size=100),
+            embeddings=EmbeddingsConfig(model="openai/text-embedding-3-small"),
+            llm=LLMConfig(model=os.getenv("LLM_MODEL", "openai/gpt-4o-mini"), temperature=0.0),
+            chunking=ChunkingConfig(max_chunk_size=1000, min_chunk_size=20),
             logging=LoggingConfig(level="INFO"),
             private_keywords=["Internal", "Restricted", "salary"],
         )
