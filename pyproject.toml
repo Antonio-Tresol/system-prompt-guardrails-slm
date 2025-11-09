@@ -9,6 +9,7 @@ dependencies = [
     "deepagents>=0.1.4",
     "docling>=2.61.0",
     "huggingface-hub[hf-xet]>=0.36.0",
+    "ipykernel>=7.1.0",
     "langchain>=1.0.2",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.3.12",
@@ -16,8 +17,11 @@ dependencies = [
     "langfuse>=3.8.1",
     "langgraph>=1.0.2",
     "loguru>=0.7.3",
+    "matplotlib>=3.10.7",
+    "pandas>=2.3.3",
     "pydantic-settings>=2.11.0",
     "pyyaml>=6.0.3",
+    "seaborn>=0.13.2",
     "tiktoken>=0.12.0",
 ]
 
@@ -46,13 +50,10 @@ include = ["data_generation*", "knowledge_base*", "utils*"]
 #####################################################################
 
 [tool.ruff]
-# Set the max line length to 100
 line-length = 100
 
-# Match your project's `requires-python`
 target-version = "py312"
 
-# Exclude common directories from linting and formatting
 exclude = [
     ".bzr",
     ".direnv",
@@ -75,7 +76,6 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# Select all the rules you asked for and more
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -121,24 +121,15 @@ known-first-party = ["safety_prompts_for_slm"]
 convention = "google"
 
 [tool.ruff.format]
-# This enables the Ruff formatter (a replacement for Black)
-# It will add trailing commas by default.
-
-# Use double quotes for strings
 quote-style = "double"
-
-# Set indent style to spaces (width is implicitly 4, the Python default)
 indent-style = "space"
-
 # Format code snippets inside your docstrings
 docstring-code-format = true
 
 [tool.pyrefly]
 # --- No `project-includes` or `search-path` ---
-# Let Pyrefly use its flexible defaults to find your files.
 
-# 2. Define what to ignore
-# This list is still critical for performance
+# Define what to ignore
 project-excludes = [
     ".bzr",
     ".direnv",
@@ -159,9 +150,7 @@ project-excludes = [
     "dist",
     "node_modules",
 ]
-
-# 4. Enforce strict stub-checking
+# Enforce strict stub-checking
 ignore-missing-source = false
-
-# 5. Define behavior for untyped functions
+# Define behavior for untyped functions
 untyped-def-behavior = "check-and-infer-return-type"

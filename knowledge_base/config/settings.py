@@ -62,17 +62,41 @@ class Settings(BaseSettings):
     )
 
     @classmethod
-    def load_from_yaml(cls, config_path: str = "knowledge_base/config/config.yaml") -> "Settings":
-        """Load settings from YAML configuration file and environment variables."""
+    def load_from_yaml(
+        cls,
+        *,
+        config_path: str = "knowledge_base/config/config.yaml",
+        project_root: Path | None = None,
+    ) -> "Settings":
+        """Load settings from YAML configuration file and environment variables.
+
+        Args:
+            config_path: Path to config YAML file (relative to project_root).
+            project_root: Project root directory. If None, inferred from config_path.
+        """
         config_file = Path(config_path)
         if not config_file.exists():
             msg = f"Configuration file not found: {config_path}"
             raise FileNotFoundError(msg)
 
+        # Infer project root from config path if not provided
+        if project_root is None:
+            # Default assumes config is at knowledge_base/config/config.yaml
+            if "knowledge_base/config" in str(config_file):
+                project_root = config_file.parent.parent.parent
+            else:
+                project_root = Path.cwd()
+
         with config_file.open() as f:
             config_data = yaml.safe_load(f)
 
-        paths = PathsConfig(**config_data["paths"])
+        # Resolve paths relative to project root
+        paths_data = config_data["paths"].copy()
+        for key, value in paths_data.items():
+            if isinstance(value, str) and value.startswith("./"):
+                paths_data[key] = str(project_root / value.lstrip("./"))
+
+        paths = PathsConfig(**paths_data)
         embeddings = EmbeddingsConfig(**config_data["embeddings"])
         model_config = ModelConfig(**config_data["model"])
         chunking = ChunkingConfig(**config_data["chunking"])

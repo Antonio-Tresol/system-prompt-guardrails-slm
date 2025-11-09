@@ -361,4 +361,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Generation interrupted by user")
+    except Exception as e:
+        logger.error(f"❌ Generation failed: {e}")
