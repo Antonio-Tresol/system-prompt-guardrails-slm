@@ -70,7 +70,8 @@ class TestSettings:
         settings = Settings.load_from_yaml(config_path=str(config_file))
 
         # Assert: Verify all settings loaded correctly
-        assert settings.paths.source_documents == "./data"
+        # Paths are resolved to absolute, so check they end with expected relative path
+        assert settings.paths.source_documents.endswith("data")
         assert settings.embeddings.model == TEST_MODEL_NAME
         assert settings.model.temperature == TEST_TEMPERATURE
         assert TEST_COOKBOOK_KEYWORD in settings.private_keywords
