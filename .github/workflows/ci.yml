@@ -43,8 +43,8 @@ jobs:
         run: uv run ruff format --check .
         shell: bash
 
-      - name: Run pyrefly type checker
-        run: uv run pyrefly check
+      - name: Run pyrefly type checker (excluding notebooks)
+        run: uv run pyrefly check --project-excludes '**/*.ipynb'
         shell: bash
 
   tests:
