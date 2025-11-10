@@ -32,7 +32,7 @@ uv run build_knowledge_base
 ```
 
 This will:
-1. Load documents from `data_generation/synthetic_data/`
+1. Load documents from `data/` (here is the place where the synthetic markdown and pdf files should be for processing)
 2. Process and chunk them using Docling
 3. Detect privacy levels using LLM
 4. Extract rich metadata
