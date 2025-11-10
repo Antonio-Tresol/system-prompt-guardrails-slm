@@ -221,3 +221,4 @@ __marimo__/
 data_generation/outputs/
 data_generation/prompt_templates/
 data_generation/data_generation
+data_generation/papers/paper_pdfs
