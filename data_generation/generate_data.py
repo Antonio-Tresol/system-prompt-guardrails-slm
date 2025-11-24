@@ -1,11 +1,10 @@
 """Main script for data generation pipeline.
 
-This script generates synthetic data using various LLMs from OpenRouter.
+This script generates synthetic data using various Models from OpenRouter.
 It supports two modes: simple (direct generation) and agentic (with tools).
 """
 
 import argparse
-import logging
 import random
 from pathlib import Path
 
@@ -27,13 +26,7 @@ from data_generation.constants import (
 )
 from data_generation.internal_prompts import DEEP_AGENT_SYSTEM_PROMPT
 from data_generation.utils import load_prompt_template, save_output
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+from utils.logging import logger, setup_logging
 
 
 def validate_model_name(model_name: str) -> None:
@@ -91,7 +84,10 @@ def create_langfuse_handler(settings: Settings) -> CallbackHandler:
 
 
 def generate_content_with_one_shot_agent(
-    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+    model: ChatOpenAI,
+    prompt_template: str,
+    theme: str,
+    langfuse_handler: CallbackHandler,
 ) -> str:
     """Generate content using one-shot writing (no tools, no loops).
 
@@ -126,7 +122,10 @@ def generate_content_with_one_shot_agent(
 
 
 def generate_content_with_deep_agent(
-    model: ChatOpenAI, prompt_template: str, theme: str, langfuse_handler: CallbackHandler
+    model: ChatOpenAI,
+    prompt_template: str,
+    theme: str,
+    langfuse_handler: CallbackHandler,
 ) -> str:
     """Generate content using Deep Agent (with planning, tools, and context management).
 
@@ -167,7 +166,7 @@ def parse_arguments() -> argparse.Namespace:
         Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description="Generate synthetic data using LLMs from OpenRouter"
+        description="Generate synthetic data using Models from OpenRouter",
     )
     parser.add_argument(
         "--model-name",
@@ -213,7 +212,7 @@ def setup_generation(
         args: Parsed command-line arguments.
 
     Returns:
-        Tuple of (settings, llm, prompt_template, langfuse_handler).
+        Tuple of (settings, Model, prompt_template, langfuse_handler).
 
     Raises:
         SystemExit: If setup fails.
@@ -300,11 +299,17 @@ def run_generation(
             try:
                 if args.deep_agent:
                     content = generate_content_with_deep_agent(
-                        model, prompt_template, theme, langfuse_handler
+                        model,
+                        prompt_template,
+                        theme,
+                        langfuse_handler,
                     )
                 else:
                     content = generate_content_with_one_shot_agent(
-                        model, prompt_template, theme, langfuse_handler
+                        model,
+                        prompt_template,
+                        theme,
+                        langfuse_handler,
                     )
 
                 filepath = save_output(
@@ -326,6 +331,9 @@ def run_generation(
 
 def main() -> None:
     """Main entry point for the data generation script."""
+    # Setup logging
+    setup_logging(level="INFO", log_file="data_generation.log")
+
     args = parse_arguments()
 
     settings, model, prompt_template, langfuse_handler = setup_generation(args)
@@ -338,7 +346,11 @@ def main() -> None:
     logger.info("Samples per theme: %d", args.samples)
 
     files_generated = run_generation(
-        model, prompt_template, selected_themes, args, langfuse_handler
+        model,
+        prompt_template,
+        selected_themes,
+        args,
+        langfuse_handler,
     )
 
     logger.info("=" * 60)
@@ -349,4 +361,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Generation interrupted by user")
+    except Exception as e:
+        logger.error(f"❌ Generation failed: {e}")

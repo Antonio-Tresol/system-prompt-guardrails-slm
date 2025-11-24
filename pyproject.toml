@@ -5,38 +5,56 @@ description = "An experiment setup to test safety prompts for sml"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "chromadb>=1.3.4",
     "deepagents>=0.1.4",
+    "docling>=2.61.0",
+    "huggingface-hub[hf-xet]>=0.36.0",
+    "ipykernel>=7.1.0",
     "langchain>=1.0.2",
+    "langchain-chroma>=1.0.0",
+    "langchain-community>=0.3.12",
     "langchain-openai>=1.0.1",
     "langfuse>=3.8.1",
+    "langgraph>=1.0.2",
+    "loguru>=0.7.3",
+    "matplotlib>=3.10.7",
+    "pandas>=2.3.3",
     "pydantic-settings>=2.11.0",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0.3",
+    "seaborn>=0.13.2",
+    "tiktoken>=0.12.0",
 ]
 
 [dependency-groups]
 dev = [
     "langgraph-cli[inmem]>=0.1.55",
     "pyrefly>=0.38.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
     "ruff>=0.14.2",
 ]
 
 [project.scripts]
 generate_corpus = "data_generation.generate_data:main"
+build_knowledge_base = "knowledge_base.main:main"
 
 [tool.uv]
 package = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data_generation*", "knowledge_base*", "utils*"]
 
 #####################################################################
 # Ruff Configuration
 #####################################################################
 
 [tool.ruff]
-# Set the max line length to 100
 line-length = 100
 
-# Match your project's `requires-python`
 target-version = "py312"
 
-# Exclude common directories from linting and formatting
 exclude = [
     ".bzr",
     ".direnv",
@@ -59,7 +77,6 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# Select all the rules you asked for and more
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -72,6 +89,7 @@ select = [
     "D",   # pydocstyle (All docstring rules)
     "S",   # flake8-bandit (Security rules)
     "T20", # flake8-print (Flag print statements)
+    "COM", # flake8-commas (Enforce trailing commas)
 ]
 
 # Ignore specific noisy rules
@@ -85,10 +103,15 @@ ignore = [
     "D105", # Missing docstring in magic method
     "D106", # Missing docstring in public nested class
     "D107", # Missing docstring in __init__ method
+    "COM812", # Trailing comma missing (handled by formatter)
+    "COM819", # Trailing comma prohibited (handled by formatter)
 ]
 
 # Auto-fix everything that Ruff can safely fix
 fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]  # Allow assert in tests
 
 [tool.ruff.lint.isort]
 # Tell Ruff what your project's own module name is
@@ -99,24 +122,15 @@ known-first-party = ["safety_prompts_for_slm"]
 convention = "google"
 
 [tool.ruff.format]
-# This enables the Ruff formatter (a replacement for Black)
-# It will add trailing commas by default.
-
-# Use double quotes for strings
 quote-style = "double"
-
-# Set indent style to spaces (width is implicitly 4, the Python default)
 indent-style = "space"
-
 # Format code snippets inside your docstrings
 docstring-code-format = true
 
 [tool.pyrefly]
 # --- No `project-includes` or `search-path` ---
-# Let Pyrefly use its flexible defaults to find your files.
 
-# 2. Define what to ignore
-# This list is still critical for performance
+# Define what to ignore
 project-excludes = [
     ".bzr",
     ".direnv",
@@ -136,10 +150,9 @@ project-excludes = [
     "build",
     "dist",
     "node_modules",
+    "**/*.ipynb",  # Exclude all notebooks - runtime context differs from static analysis
 ]
-
-# 4. Enforce strict stub-checking
+# Enforce strict stub-checking
 ignore-missing-source = false
-
-# 5. Define behavior for untyped functions
+# Define behavior for untyped functions
 untyped-def-behavior = "check-and-infer-return-type"

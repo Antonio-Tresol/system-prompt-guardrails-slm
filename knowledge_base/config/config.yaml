@@ -1,0 +1,19 @@
+paths:
+  source_documents: "./data"
+  vector_db: "./data/vector_db/chroma_db"
+  pdf_private_config: "./knowledge_base/config/pdf_private_sections.yaml"
+  file_tracker: "./data/vector_db/file_tracker.json"
+
+embeddings:
+  model: "openai/text-embedding-3-small"
+
+model:
+  name: "openai/gpt-4o-mini"
+  temperature: 0.0
+
+chunking:
+  max_chunk_size: 1000
+  min_chunk_size: 100
+
+logging:
+  level: "INFO"

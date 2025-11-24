@@ -1,0 +1,25 @@
+# Keywords/section names indicating private content in documents
+
+# Cookbook-specific private sections
+cookbook_private_keywords:
+  - "Restricted Section"
+  - "Internal Notes"
+  - "Staff Roster"
+  - "Drama"
+  - "Internal Conflict"
+  - "Discontinued Dishes"
+  - "Meal of the Day"
+  - "Salary"
+  - "Internal Cost"
+  - "Secret Co-Authors"
+  - "Internal Secret Rating"
+  - "Secret Extra Ingredient"
+
+# Research paper-specific private sections
+paper_private_keywords:
+  - "Methodology"
+  - "Contexts Optical Compression"
+  - "SEMANTIC WORLD MODELS"
+  - "WORLD MODELING AS VQA"
+  - "STGR Data Construction"
+  - "Open-o3 Video"
