@@ -1,0 +1,80 @@
+from typing import Literal
+
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+
+from knowledge_base.ingest.chunkers import Chunk
+from utils.logging import logger
+
+
+class PrivacyResult(BaseModel):
+    """Result of privacy detection."""
+
+    has_private_info: bool = Field(
+        description="True if the chunk contains any private/restricted information",
+    )
+    privacy_level: Literal["public", "mixed", "private"] = Field(
+        description=(
+            "Classification: 'public' (no private content), "
+            "'mixed' (both public and private), 'private' (entirely private)"
+        ),
+    )
+    reasoning: str = Field(description="Brief explanation of the privacy classification decision")
+
+
+def detect_privacy(*, chunk: Chunk, keywords: list[str], model: ChatOpenAI) -> PrivacyResult:
+    """Detect privacy level of a chunk using agent with structured output.
+
+    Args:
+        chunk: The chunk to analyze.
+        keywords: List of private keywords for context.
+        model: OpenRouter model client.
+
+    Returns:
+        Privacy detection result.
+    """
+    keywords_str = "\n".join(f"- {kw}" for kw in keywords)
+
+    system_prompt = """You are analyzing a chunk from a document (cookbook or research paper).
+
+Determine if this chunk contains private/restricted information.
+
+Classify the privacy level:
+- "public": No private content
+- "mixed": Contains both public and private content
+- "private": Entirely private content"""
+
+    user_message = f"""**Private indicators include**:
+{keywords_str}
+
+Also look for:
+- Explicit markers like "Restricted Section →", "Internal", "Secret"
+- Methodology sections in research papers
+- Internal financial data (salaries, costs)
+- Staff information or conflicts
+
+**Chunk text**:
+{chunk.text}"""
+
+    try:
+        # Create agent with structured output (no tools needed for classification)
+        agent = create_agent(
+            model=model,
+            tools=[],
+            response_format=PrivacyResult,
+            system_prompt=system_prompt,
+        )
+
+        # Invoke agent with user message
+        result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
+
+        # Extract structured response from agent state
+        return result["structured_response"]
+    except Exception as e:
+        logger.warning(f"Failed to detect privacy, defaulting to public: {e}")
+        return PrivacyResult(
+            has_private_info=False,
+            privacy_level="public",
+            reasoning="Error in detection, defaulted to public",
+        )

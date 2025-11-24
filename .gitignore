@@ -205,7 +205,7 @@ cython_debug/
 
 # Ruff stuff:
 .ruff_cache/
-
+data/**
 # PyPI configuration file
 .pypirc
 
@@ -222,3 +222,7 @@ data_generation/outputs/
 data_generation/prompt_templates/
 data_generation/data_generation
 data_generation/papers/paper_pdfs
+
+# Knowledge base vector DB
+knowledge_base/vectordb/chroma_db/
+knowledge_base/vectordb/file_tracker.json

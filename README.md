@@ -67,6 +67,16 @@ The core component for generating synthetic data. See [data_generation/README.md
 ```bash
 uv run generate_corpus
 ```
+### Knowledge Base Ingestion Pipeline
+Ingests generated data into a vector database with privacy detection. See [knowledge_base/README.md](knowledge_base/README.md) for details.
+
+**Quick start:**
+```bash
+uv run build_knowledge_base
+```
+
+### Utils
+Common utilities for logging and other shared functionality.
 
 ## Development
 
@@ -80,7 +90,13 @@ uv run ruff format .
 uv run pyrefly check
 ```
 
-### Testing with LangGraph Studio
+### Run Tests
+
+```bash
+uv run pytest tests/
+```
+
+### Testing Agents with LangGraph Studio
 
 Test agents interactively:
 

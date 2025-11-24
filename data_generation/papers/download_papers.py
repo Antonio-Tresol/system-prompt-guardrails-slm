@@ -13,7 +13,7 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-SAVE_DIR = Path("paper_pdfs")
+SAVE_DIR = Path("data")
 ARXIV_URLS = [
     "https://arxiv.org/pdf/2510.18234",
     "https://arxiv.org/pdf/2510.18871",
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
+
 
 def download_file(url: str, dest_dir: Path) -> None:
     """Download a single PDF file from arXiv.
@@ -77,6 +78,7 @@ def download_all_papers(urls: list[str], dest_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Main entry point for the arXiv paper downloader."""
