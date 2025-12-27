@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions
+# Agent Instructions
 
 ## Quality Standards (apply to to python files as well as to notebooks)
 
