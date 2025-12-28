@@ -16,7 +16,24 @@ def main() -> None:
 
     logger.info("Starting knowledge base ingestion")
 
-    source_docs_path = Path(settings.paths.source_documents)
+    # Use source directories from settings
+    # settings.paths.source_documents is now a list[str] of absolute paths
+    source_dirs = [Path(p) for p in settings.paths.source_documents]
+
+    # Check for papers and download if empty
+    # We dynamically check if any source dir matches 'papers' to trigger download
+    # This keeps the logic somewhat tied to the data structure but configurable path
+    for source_dir in source_dirs:
+        if "papers" in source_dir.name and (
+            not source_dir.exists() or not list(source_dir.glob("*.pdf"))
+        ):
+            logger.info(f"No papers found in {source_dir}. Downloading papers...")
+            from data_generation.papers.download_papers import ARXIV_URLS, download_all_papers
+
+            try:
+                download_all_papers(ARXIV_URLS, source_dir)
+            except Exception as e:
+                logger.error(f"Failed to download papers: {e}")
 
     file_tracker = FileTracker(settings.paths.file_tracker)
 
@@ -27,15 +44,23 @@ def main() -> None:
         openrouter_base_url=settings.openrouter_base_url,
     )
 
+    unprocessed = []
     if chroma_store.collection_exists():
-        unprocessed = file_tracker.get_unprocessed_files(source_docs_path)
+        for source_path in source_dirs:
+            if source_path.exists():
+                unprocessed.extend(file_tracker.get_unprocessed_files(source_path))
+
         if not unprocessed:
             logger.info("✅ Vector DB is up-to-date")
             return
         logger.info(f"Found {len(unprocessed)} new/modified documents")
     else:
         logger.info("Creating new vector database")
-        unprocessed = list(source_docs_path.rglob("*.md")) + list(source_docs_path.rglob("*.pdf"))
+        for source_path in source_dirs:
+            if source_path.exists():
+                unprocessed.extend(
+                    list(source_path.rglob("*.md")) + list(source_path.rglob("*.pdf"))
+                )
         logger.info(f"Found {len(unprocessed)} documents to process")
 
     model = ChatOpenAI(

@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class PathsConfig(BaseSettings):
     """Paths configuration."""
 
-    source_documents: str
+    source_documents: list[str]
     vector_db: str
     pdf_private_config: str
     file_tracker: str
@@ -95,6 +95,14 @@ class Settings(BaseSettings):
         for key, value in paths_data.items():
             if isinstance(value, str) and value.startswith("./"):
                 paths_data[key] = str(project_root / value.lstrip("./"))
+            elif isinstance(value, list) and key == "source_documents":
+                resolved_paths = []
+                for path in value:
+                    if path.startswith("./"):
+                        resolved_paths.append(str(project_root / path.lstrip("./")))
+                    else:
+                        resolved_paths.append(path)
+                paths_data[key] = resolved_paths
 
         paths = PathsConfig(**paths_data)
         embeddings = EmbeddingsConfig(**config_data["embeddings"])

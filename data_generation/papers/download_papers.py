@@ -13,7 +13,7 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-SAVE_DIR = Path("data")
+SAVE_DIR = Path("papers")
 ARXIV_URLS = [
     "https://arxiv.org/pdf/2510.18234",
     "https://arxiv.org/pdf/2510.18871",

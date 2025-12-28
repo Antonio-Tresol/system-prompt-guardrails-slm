@@ -60,10 +60,20 @@ def chunk_document_node(state: IngestionState) -> IngestionState:
         return state
 
     try:
+        # Read raw text for precise line mapping in Markdown
+        raw_text = None
+        file_path = Path(state["file_path"])
+        if file_path.suffix.lower() == ".md":
+            try:
+                raw_text = file_path.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to read raw text for {file_path}: {e}")
+
         chunks = chunk_document(
             doc=state["document"],
             max_chunk_size=state["settings"].chunking.max_chunk_size,
             min_chunk_size=state["settings"].chunking.min_chunk_size,
+            raw_text=raw_text,
         )
         state["chunks"] = chunks
         logger.info(f"Created {len(chunks)} chunks")
@@ -129,6 +139,9 @@ def extract_metadata_node(state: IngestionState) -> IngestionState:
                 chunk_idx=idx,
                 document_title=document_title,
                 source_file=str(file_path),
+                start_page=chunk.start_page,  # Map start_page
+                end_page=chunk.end_page,  # Map end_page
+                page_number=chunk.start_page,  # Use start_page as page_number for simplicity
             )
             metadatas.append(metadata)
         except Exception as e:

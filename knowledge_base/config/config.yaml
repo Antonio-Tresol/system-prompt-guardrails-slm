@@ -1,5 +1,7 @@
 paths:
-  source_documents: "./data"
+  source_documents:
+    - "./data_generation/synthetic_data"
+    - "./data_generation/papers"
   vector_db: "./data/vector_db/chroma_db"
   pdf_private_config: "./knowledge_base/config/pdf_private_sections.yaml"
   file_tracker: "./data/vector_db/file_tracker.json"

@@ -12,6 +12,9 @@ def extract_metadata(
     chunk_idx: int,
     document_title: str,
     source_file: str,
+    start_page: int | None = None,
+    end_page: int | None = None,
+    page_number: int | None = None,
 ) -> ChunkMetadata:
     """Extract full metadata from a chunk.
 
@@ -21,6 +24,9 @@ def extract_metadata(
         chunk_idx: Index of the chunk in the document.
         document_title: Title of the document.
         source_file: Path to the source file.
+        start_page: Starting page number.
+        end_page: Ending page number.
+        page_number: Legacy page number.
 
     Returns:
         Complete chunk metadata.
@@ -45,9 +51,6 @@ def extract_metadata(
     if len(headings) > 2:
         subsection = headings[-2]
 
-    origin = chunk.meta.get("origin")
-    page_number = origin.get("page_number") if isinstance(origin, dict) else None
-
     # Heading level based on number of headings (depth)
     heading_level = len(headings) if headings else None
 
@@ -61,6 +64,10 @@ def extract_metadata(
         num_words=num_words,
         char_start=chunk.char_start,
         char_end=chunk.char_end,
+        start_line=chunk.start_line,
+        end_line=chunk.end_line,
+        start_page=start_page,
+        end_page=end_page,
         chunk_index=chunk_idx,
         source_file=source_file,
         page_number=page_number,
