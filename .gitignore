@@ -3,8 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 .langgraph_api/
-
+data_generation/papers/*
 .vscode/
+.agent/*
 # C extensions
 *.so
 
@@ -226,3 +227,4 @@ data_generation/papers/paper_pdfs
 # Knowledge base vector DB
 knowledge_base/vectordb/chroma_db/
 knowledge_base/vectordb/file_tracker.json
+data_generation/papers/2510.18234.pdf
