@@ -5,6 +5,8 @@ from docling.chunking import HybridChunker
 from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
 from pydantic import BaseModel
 
+from utils.logging import logger
+
 
 class Chunk(BaseModel):
     """Represents a chunk of text from a document."""
@@ -21,7 +23,7 @@ class Chunk(BaseModel):
 
 def chunk_document(
     *,
-    doc: Any,  # noqa: ANN401
+    doc: Any,  # type: ignore # noqa: ANN401
     max_chunk_size: int,
     min_chunk_size: int,
     raw_text: str | None = None,
@@ -90,7 +92,7 @@ def chunk_document(
                     start_char = full_text.find(probe, current_search_pos)
                     if start_char != -1:
                         # Success, but we need to adjust back to approximate start of chunk
-                        # Actually, let us just keep this start_char as a "best guess" for line mapping
+                        # Actually, let us just keep this start_char as a "best guess"
                         pass
 
         if start_char != -1:
@@ -134,7 +136,7 @@ def chunk_document(
                 end_page = max(page_nos)
         except Exception:
             # Fallback to legacy or empty
-            pass
+            logger.debug("Docling prov extraction failed for chunk")
 
         meta_dict = chunk.meta.model_dump() if hasattr(chunk.meta, "model_dump") else {}
 

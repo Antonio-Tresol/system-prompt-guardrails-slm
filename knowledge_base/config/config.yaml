@@ -10,7 +10,7 @@ embeddings:
   model: "openai/text-embedding-3-small"
 
 model:
-  name: "openai/gpt-4o-mini"
+  name: "openai/gpt-oss-120b"
   temperature: 0.0
 
 chunking:
