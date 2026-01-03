@@ -16,18 +16,10 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-### 3. Check Types
-```bash
-uv run pyrefly check
-```
-
 ### 4. Run Tests to Ensure Functionality and Integrity
 ```bash
 uv run pytest
 ```
-
-> **Important**: If `pyrefly check` reports any errors, you must fix them before finalizing your work.
-
 ---
 
 ## Code Style Guidelines
