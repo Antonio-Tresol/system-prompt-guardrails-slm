@@ -169,7 +169,7 @@ def load_gemma_model(
     # 4. Setup load kwargs
     load_kwargs = {
         "device_map": config.device_map,
-        "torch_dtype": config.dtype,  # Unsloth models need torch_dtype
+        "dtype": config.dtype,  # Unsloth models need torch_dtype
         "attn_implementation": "eager",  # Required for attention extraction
     }
 

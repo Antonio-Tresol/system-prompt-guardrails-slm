@@ -5,11 +5,8 @@ __pycache__/
 .langgraph_api/
 data_generation/papers/*
 .vscode/
-.agent/*
 # C extensions
 *.so
-model_evaluation/main_agent/.agent/**
-model_evaluation/eval_agent/.agent/**
 # Distribution / packaging
 .Python
 build/
@@ -230,3 +227,4 @@ knowledge_base/vectordb/chroma_db/
 knowledge_base/vectordb/file_tracker.json
 data_generation/papers/2510.18234.pdf
 tests/audit_results_1.0.csv
+.gitignore
