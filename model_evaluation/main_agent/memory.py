@@ -1,127 +1,17 @@
-"""Utility functions for extracting and visualizing attention matrices from transformer models."""
+"""Memory tracking and estimation utilities for model inference."""
 
 import os
 import time
-from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Optional, Type
+from typing import Any, Literal, Optional
 
-import plotly.express as px
 import psutil
 import torch
-from transformers import PreTrainedModel, PreTrainedTokenizer
-
-CHAT_TEMPLATE_TOKENS = frozenset(
-    {
-        "<start_of_turn>",
-        "<end_of_turn>",
-        "user",
-        "model",
-        "<bos>",
-        "<eos>",
-        "<s>",
-        "</s>",
-        "<pad>",
-        "<unk>",
-    }
-)
-
-
-def is_chat_template_token(token: str) -> bool:
-    """Check if token is part of chat template structure (not content)."""
-    return token in CHAT_TEMPLATE_TOKENS or token.strip() in CHAT_TEMPLATE_TOKENS
-
+from transformers import PreTrainedModel
 
 # =============================================================================
-# Gemma 3 Interpretability Result (Type-Safe)
+# Memory Usage Tracking
 # =============================================================================
-
-
-@dataclass
-class GemmaInterpretabilityResult:
-    """Type-safe container for hybrid extraction results from Gemma 3.
-
-    Attributes:
-        global_residuals: Layer index -> residual contribution tensor.
-                          Used for global layers (O(n) memory vs O(n²) for attention).
-        local_attentions: Layer index -> windowed attention tensor.
-                          Used for local layers (window 1024 < hidden 2560).
-        tokens: List of decoded tokens from the full sequence.
-        answer: The generated answer text.
-        prompt_len: Number of tokens in the prompt (before generation).
-    """
-
-    global_residuals: dict[int, torch.Tensor]
-    local_attentions: dict[int, torch.Tensor]
-    tokens: list[str]
-    answer: str
-    prompt_len: int
-
-
-def extract_attention(
-    *,
-    text: str,
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    device: str,
-) -> tuple:
-    """Generates an answer and run a forward pass on the full sequence to extract attention.
-
-    Returns:
-        tuple: (attentions, tokens, answer, prompt_len)
-    """
-    inputs = tokenizer(text, return_tensors="pt").to(device)
-
-    # 1. Generate the answer first
-    with torch.inference_mode():
-        generated_ids = model.generate(
-            **inputs, max_new_tokens=100, do_sample=True, temperature=0.7
-        )  # ty:ignore[call-non-callable]
-
-    # 2. Run one forward pass on the FULL sequence (Prompt + Answer) to get comprehensive attentions
-    #    This allows us to see how the generated answer attends back to the prompt.
-    with torch.inference_mode():
-        outputs = model(generated_ids, output_attentions=True)
-
-    # Decode the answer part only for display
-    input_len = inputs.input_ids.shape[-1]
-    answer_ids = generated_ids[0][input_len:]
-    answer = tokenizer.decode(answer_ids, skip_special_tokens=True)
-
-    # Convert ALL ids to tokens for the axis labels
-    all_tokens = tokenizer.convert_ids_to_tokens(generated_ids[0])
-
-    return outputs.attentions, all_tokens, answer, input_len
-
-
-def plot_attention_map(
-    *,
-    attention_matrix: torch.Tensor,
-    tokens: list[str],
-    title: str = "Attention Map",
-) -> None:
-    """Plots an interactive heatmap of the attention matrix using Plotly."""
-    # Move to cpu and numpy
-    attn_data = attention_matrix.float().cpu().numpy()
-
-    # Create interactive heatmap
-    fig = px.imshow(
-        attn_data,
-        x=tokens,
-        y=tokens,
-        labels={"x": "Key Token", "y": "Query Token", "color": "Attention"},
-        title=title,
-        color_continuous_scale="Viridis",
-        aspect="auto",
-    )
-
-    # Improve layout for readability
-    fig.update_layout(
-        width=800,
-        height=800,
-        xaxis_tickangle=-45,
-    )
-    fig.show()
 
 
 def get_memory_usage() -> dict[str, float]:
@@ -150,7 +40,6 @@ def get_memory_usage() -> dict[str, float]:
     if torch.backends.mps.is_available():
         memory_info["mps_available"] = True
         try:
-            # These might not be available in all torch versions, but they are in newer ones
             memory_info["mps_allocated_mb"] = torch.mps.current_allocated_memory() / (1024 * 1024)
             memory_info["mps_driver_allocated_mb"] = torch.mps.driver_allocated_memory() / (
                 1024 * 1024
@@ -192,7 +81,7 @@ def print_memory_usage(label: str = "") -> None:
     elif mem.get("mps_available"):
         print("\nMPS: Available (detailed stats via process memory)")
 
-    print(f"{'=' * 60}\n")
+    print("=" * 60 + "\n")
 
 
 class MemoryTracker:
@@ -202,18 +91,19 @@ class MemoryTracker:
         self.label = label
         self.start_mem: dict[str, float] = {}
         self.end_mem: dict[str, float] = {}
+        self.start_time: float = 0.0
+        self.end_time: float = 0.0
 
     def __enter__(self) -> "MemoryTracker":
         self.start_mem = get_memory_usage()
         self.start_time = time.time()
-        # Reset max memory tracker for CUDA
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         return self
 
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
+        exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> None:
@@ -226,23 +116,44 @@ class MemoryTracker:
         print("─" * 50)
         print(f"  ⏱️  Duration:    {duration:.2f}s")
 
-        # Basic RSS delta
         rss_delta = self.end_mem["process_rss_mb"] - self.start_mem["process_rss_mb"]
         print(f"  💾 RSS Change:  {rss_delta:+.2f} MB")
 
-        # CUDA specific details
         if "cuda_allocated_mb" in self.end_mem:
             cuda_delta = self.end_mem["cuda_allocated_mb"] - self.start_mem["cuda_allocated_mb"]
             peak_cuda = torch.cuda.max_memory_allocated() / (1024 * 1024)
             print(f"  🖥️  CUDA Change: {cuda_delta:+.2f} MB")
             print(f"  📈 Peak CUDA:   {peak_cuda:.2f} MB")
 
-        # MPS specific details
         if "mps_allocated_mb" in self.end_mem:
             mps_delta = self.end_mem["mps_allocated_mb"] - self.start_mem["mps_allocated_mb"]
             print(f"  🍎 MPS Change:  {mps_delta:+.2f} MB")
 
         print("─" * 50 + "\n")
+
+
+# =============================================================================
+# Memory Estimation
+# =============================================================================
+
+
+def get_available_memory() -> dict[str, float]:
+    """Get available memory in GB."""
+    result = {}
+
+    vm = psutil.virtual_memory()
+    result["ram_available_gb"] = vm.available / (1024**3)
+    result["ram_total_gb"] = vm.total / (1024**3)
+
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            allocated = torch.cuda.memory_allocated(i) / (1024**3)
+            total = props.total_memory / (1024**3)
+            result[f"cuda_{i}_available_gb"] = total - allocated
+            result[f"cuda_{i}_total_gb"] = total
+
+    return result
 
 
 def estimate_kv_cache_size(
@@ -252,29 +163,39 @@ def estimate_kv_cache_size(
     head_dim: int,
     seq_length: int,
     batch_size: int = 1,
-    dtype_size: int = 2,  # 2 for float16/bfloat16, 4 for float32
+    dtype_size: int = 2,
 ) -> float:
     """Estimates the KV cache size in MB."""
-    # Each token needs 2 vectors (Key and Value) per head per layer
-    # Size = num_layers * 2 * num_heads * head_dim * seq_length * batch_size * dtype_size
     cache_bytes = num_layers * 2 * num_heads * head_dim * seq_length * batch_size * dtype_size
     return cache_bytes / (1024 * 1024)
 
 
+def estimate_attention_matrix_memory(
+    context_length: int,
+    num_heads: int,
+    layer_type: Literal["global", "local"],
+    window_size: int = 1024,
+    dtype_bytes: int = 4,
+) -> float:
+    """Estimate attention matrix memory in GB for a single layer."""
+    if layer_type == "global":
+        elements = context_length * context_length * num_heads
+    else:
+        elements = context_length * window_size * num_heads
+    return (elements * dtype_bytes) / (1024**3)
+
+
+# =============================================================================
+# Model Memory Footprint
+# =============================================================================
+
+
 def get_model_memory_footprint(model: PreTrainedModel) -> dict[str, Any]:
     """Calculate the memory footprint of a model."""
-    param_size = 0
-    buffer_size = 0
-
-    for param in model.parameters():
-        param_size += param.nelement() * param.element_size()
-
-    for buffer in model.buffers():
-        buffer_size += buffer.nelement() * buffer.element_size()
-
+    param_size = sum(p.nelement() * p.element_size() for p in model.parameters())
+    buffer_size = sum(b.nelement() * b.element_size() for b in model.buffers())
     total_size = param_size + buffer_size
 
-    # Extract model config for KV cache estimation help
     config = model.config
     hidden_size = getattr(config, "hidden_size", 0)
     num_attention_heads = getattr(config, "num_attention_heads", 0)

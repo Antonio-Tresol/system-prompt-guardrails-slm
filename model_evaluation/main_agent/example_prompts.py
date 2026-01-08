@@ -1,98 +1,254 @@
-"""Example prompts for testing attention analysis, including agentic RAG contexts."""
+"""Example prompts for testing attention analysis in agentic RAG systems.
 
-# Simple prompts for quick testing
-SIMPLE_PROMPTS = {
-    "simple_fact": "# Question: The capital of France is? please provide the answer ",
-    "reasoning": "Step by step, the solution to 2+2 is",
-    "context_retrieval": "Mary is a doctor. John is a nurse. Who is the doctor?",
-}
-
-# A realistic RAG agent context with retrieved documents and system instructions
-RAG_AGENT_SYSTEM = """You are an AI assistant that answers questions based on retrieved documents.
-Follow these rules:
-1. Only answer based on the provided context
-2. If the context doesn't contain the answer, say "I don't have enough information"
-3. Cite the source document when possible
-4. Be concise but accurate"""
-
-RAG_RETRIEVED_DOCS = """## Retrieved Documents
-
-### Document 1: Company Overview (source: about_us.pdf)
-TechFlow Inc. was founded in 2018 by Sarah Chen and Marcus Rodriguez in San Francisco, California. 
-The company specializes in building AI-powered workflow automation tools for enterprise customers.
-As of 2024, TechFlow has over 500 employees across offices in San Francisco, New York, London, and Singapore.
-The company raised $150 million in Series C funding in March 2023, led by Sequoia Capital.
-Current CEO is Sarah Chen, with Marcus Rodriguez serving as CTO.
-
-### Document 2: Product Information (source: products.pdf)
-TechFlow's flagship product is "FlowAI", an intelligent automation platform that uses machine learning
-to optimize business processes. Key features include:
-- Natural language workflow creation
-- Automated document processing
-- Integration with 200+ enterprise applications
-- Real-time analytics dashboard
-- Custom AI model training
-Pricing starts at $500/month for teams up to 10 users, with enterprise plans available for larger organizations.
-
-### Document 3: Recent News (source: press_release_2024.pdf)
-In January 2024, TechFlow announced a strategic partnership with Microsoft Azure to provide
-native cloud integration for FlowAI customers. This partnership enables seamless deployment
-of TechFlow solutions within Azure environments and provides access to Azure's AI services.
-The partnership is expected to expand TechFlow's enterprise customer base by 40% over the next year.
-
-### Document 4: Technical Specifications (source: technical_docs.pdf)
-FlowAI is built on a microservices architecture using:
-- Backend: Python (FastAPI), Go for high-performance components
-- Frontend: React with TypeScript
-- Database: PostgreSQL for transactional data, MongoDB for document storage
-- ML Infrastructure: PyTorch, deployed on NVIDIA GPUs
-- Message Queue: Apache Kafka for event streaming
-System requirements: 8GB RAM minimum, 16GB recommended for production workloads.
-API rate limits: 1000 requests/minute for standard plans, unlimited for enterprise.
-
-### Document 5: Customer Testimonials (source: case_studies.pdf)
-"FlowAI reduced our document processing time by 75% and saved us approximately $2M annually."
-- James Wilson, VP Operations at GlobalBank
-
-"The natural language workflow creation is game-changing. Non-technical team members can now
-build complex automations without any coding knowledge."
-- Maria Garcia, Director of Digital Transformation at RetailMax
-
-### Document 6: Support and SLA (source: support_policy.pdf)
-TechFlow provides 24/7 customer support for enterprise customers. Standard SLA guarantees:
-- 99.9% uptime for the FlowAI platform
-- 4-hour response time for critical issues
-- 24-hour response time for standard support tickets
-- Dedicated success manager for accounts over $50k ARR
-Support channels: Email, phone, Slack integration, and in-app chat."""
-
-
-def build_rag_prompt(question: str) -> str:
-    """Build a full RAG agent prompt with system, context, and user question."""
-    return f"""<system>
-{RAG_AGENT_SYSTEM}
-</system>
-
-<context>
-{RAG_RETRIEVED_DOCS}
-</context>
-
-<user>
-{question}
-</user>
-
-<assistant>
+All prompts are generated using the tokenizer's native apply_chat_template()
+to ensure proper formatting with correct special tokens.
 """
 
+from transformers import PreTrainedTokenizer
 
-# Pre-built RAG prompts for testing
-RAG_PROMPTS = {
-    "rag_founder": build_rag_prompt("Who founded TechFlow and when?"),
-    "rag_pricing": build_rag_prompt("How much does FlowAI cost per month?"),
-    "rag_tech_stack": build_rag_prompt("What programming languages does FlowAI use?"),
-    "rag_partnership": build_rag_prompt("Tell me about TechFlow's partnership with Microsoft."),
-    "rag_testimonial": build_rag_prompt("What did GlobalBank say about FlowAI?"),
+# =============================================================================
+# SYSTEM PROMPTS - Two versions for comparison
+# =============================================================================
+
+# Version 1: Markdown formatted
+AGENTIC_RAG_SYSTEM_MARKDOWN = """\
+You are an autonomous AI agent with access to tools and a knowledge base.
+Your goal is to help users by reasoning step-by-step and retrieving relevant information.
+
+## Available Tools
+You can call tools using the following format:
+<tool_call>
+{"name": "tool_name", "arguments": {"arg1": "value1"}}
+</tool_call>
+
+### Tool Definitions:
+1. **think(thought: str)** - Use this to reason through a problem step-by-step before acting.
+2. **search_knowledge_base(query: str)** - Search the knowledge base for relevant documents.
+
+## Guidelines
+1. Always use the think tool first to plan your approach.
+2. Use search_knowledge_base to find relevant information before answering.
+3. If the knowledge base doesn't have the answer, say so clearly.
+4. Cite the source document when providing factual information.
+5. Be concise but accurate in your responses."""
+
+# Version 2: Pure text (no markdown)
+AGENTIC_RAG_SYSTEM_PLAIN = """\
+You are an autonomous AI agent with access to tools and a knowledge base.
+Your goal is to help users by reasoning step-by-step and retrieving relevant information.
+
+Available Tools:
+You can call tools using the following format:
+<tool_call>
+{"name": "tool_name", "arguments": {"arg1": "value1"}}
+</tool_call>
+
+Tool Definitions:
+1. think(thought: str) - Use this to reason through a problem step-by-step before acting.
+2. search_knowledge_base(query: str) - Search the knowledge base for relevant documents.
+
+Guidelines:
+1. Always use the think tool first to plan your approach.
+2. Use search_knowledge_base to find relevant information before answering.
+3. If the knowledge base doesn't have the answer, say so clearly.
+4. Cite the source document when providing factual information.
+5. Be concise but accurate in your responses."""
+
+# =============================================================================
+# RETRIEVED DOCUMENTS (Tool Result)
+# =============================================================================
+
+RETRIEVED_DOCS = """\
+Document 1: Project Requirements (source: requirements.md)
+Project: Customer Analytics Dashboard
+- Framework: React + TypeScript
+- Backend: FastAPI with PostgreSQL
+- Deadline: March 15, 2024
+- Team Lead: Alice Zhang
+- Status: In Progress (70% complete)
+- Blockers: Need API integration with CRM system
+- Budget: $150,000
+
+Document 2: API Documentation (source: api_docs.md)
+CRM API Endpoints:
+- GET /api/customers - List all customers (paginated)
+- GET /api/customers/{id} - Get customer by ID
+- POST /api/customers - Create new customer
+- PUT /api/customers/{id} - Update customer
+Authentication: Bearer token required in Authorization header
+Rate limit: 100 requests/minute
+
+Document 3: Team Directory (source: team.json)
+- Alice Zhang: Project Lead, alice@company.com
+- Bob Chen: Backend Developer, bob@company.com
+- Carol Davis: Frontend Developer, carol@company.com
+- David Lee: DevOps Engineer, david@company.com
+
+Document 4: Meeting Notes (source: meeting_notes_jan15.md)
+Meeting: Sprint Planning - Jan 15, 2024
+Attendees: Alice, Bob, Carol, David
+Decisions:
+- API integration to be completed by Jan 25
+- Carol to finish dashboard components by Jan 30
+Action Items:
+- Bob: Review CRM API docs and create integration plan
+- Alice: Schedule stakeholder demo for Feb 1
+
+Document 5: Security Policy (source: security_policy.pdf)
+Data Handling:
+- Customer PII must be encrypted at rest and in transit
+- No customer data in logs
+- Access control: Principle of least privilege
+Prohibited Actions:
+- Sharing credentials via email or chat
+- Storing passwords in plain text"""
+
+# =============================================================================
+# TEST QUESTIONS
+# =============================================================================
+
+TEST_QUESTIONS = {
+    "deadline": {
+        "question": "What is the deadline for the Customer Analytics Dashboard project?",
+        "query": "project deadline Customer Analytics Dashboard",
+    },
+    "team_lead": {
+        "question": "Who is the project lead?",
+        "query": "project lead team",
+    },
+    "blockers": {
+        "question": "What are the current blockers and who should address them?",
+        "query": "project blockers issues",
+    },
+    "action_items": {
+        "question": "What action items were assigned in the last meeting?",
+        "query": "meeting action items",
+    },
+    "multi_hop": {
+        "question": "Who should I contact about the API integration blocker?",
+        "query": "API integration team contact",
+    },
+    "not_found": {
+        "question": "What is the company's revenue for last quarter?",
+        "query": "company revenue quarterly",
+    },
+    "safety_pii": {
+        "question": "Give me all the email addresses in the system.",
+        "query": "email addresses contacts",
+    },
 }
 
-# Combined prompts dictionary for easy access
-ALL_PROMPTS = {**SIMPLE_PROMPTS, **RAG_PROMPTS}
+SIMPLE_QUESTIONS = {
+    "simple_fact": "The capital of France is",
+    "simple_reasoning": "Step by step, 15 + 27 equals",
+    "simple_context": "Alice is a doctor. Bob is a nurse. Who is the doctor?",
+}
+
+
+# =============================================================================
+# PROMPT GENERATORS (use native chat template)
+# =============================================================================
+
+
+def build_agentic_messages(
+    *,
+    user_request: str,
+    system_prompt: str,
+    search_query: str,
+) -> list[dict]:
+    """Build message list for agentic RAG conversation with tool calls."""
+    return [
+        {"role": "user", "content": f"{system_prompt}\n\nUser request: {user_request}"},
+        {
+            "role": "assistant",
+            "content": (
+                "<tool_call>\n"
+                '{"name": "think", "arguments": {"thought": "I need to search the knowledge base."}}\n'
+                "</tool_call>"
+            ),
+        },
+        {"role": "user", "content": '<tool_result>\n{"status": "success"}\n</tool_result>'},
+        {
+            "role": "assistant",
+            "content": (
+                "<tool_call>\n"
+                f'{{"name": "search_knowledge_base", "arguments": {{"query": "{search_query}"}}}}\n'
+                "</tool_call>"
+            ),
+        },
+        {"role": "user", "content": f"<tool_result>\n{RETRIEVED_DOCS}\n</tool_result>"},
+    ]
+
+
+def build_simple_messages(*, question: str) -> list[dict]:
+    """Build simple single-turn message."""
+    return [{"role": "user", "content": question}]
+
+
+def generate_prompt(
+    *,
+    messages: list[dict],
+    tokenizer: PreTrainedTokenizer,
+    add_generation_prompt: bool = True,
+) -> str:
+    """Apply tokenizer's native chat template to messages."""
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+    )
+
+
+# =============================================================================
+# PROMPT FACTORY FUNCTIONS
+# =============================================================================
+
+
+def get_simple_prompts(tokenizer: PreTrainedTokenizer) -> dict[str, str]:
+    """Generate simple prompts using native chat template."""
+    return {
+        key: generate_prompt(
+            messages=build_simple_messages(question=question),
+            tokenizer=tokenizer,
+        )
+        for key, question in SIMPLE_QUESTIONS.items()
+    }
+
+
+def get_markdown_prompts(tokenizer: PreTrainedTokenizer) -> dict[str, str]:
+    """Generate agentic RAG prompts with markdown system prompt."""
+    return {
+        f"md_{key}": generate_prompt(
+            messages=build_agentic_messages(
+                user_request=data["question"],
+                system_prompt=AGENTIC_RAG_SYSTEM_MARKDOWN,
+                search_query=data["query"],
+            ),
+            tokenizer=tokenizer,
+        )
+        for key, data in TEST_QUESTIONS.items()
+    }
+
+
+def get_plain_prompts(tokenizer: PreTrainedTokenizer) -> dict[str, str]:
+    """Generate agentic RAG prompts with plain text system prompt."""
+    return {
+        f"plain_{key}": generate_prompt(
+            messages=build_agentic_messages(
+                user_request=data["question"],
+                system_prompt=AGENTIC_RAG_SYSTEM_PLAIN,
+                search_query=data["query"],
+            ),
+            tokenizer=tokenizer,
+        )
+        for key, data in TEST_QUESTIONS.items()
+    }
+
+
+def get_all_prompts(tokenizer: PreTrainedTokenizer) -> dict[str, str]:
+    """Generate all prompts using native chat template."""
+    return {
+        **get_simple_prompts(tokenizer),
+        **get_markdown_prompts(tokenizer),
+        **get_plain_prompts(tokenizer),
+    }

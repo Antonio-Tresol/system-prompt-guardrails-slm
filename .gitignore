@@ -8,7 +8,8 @@ data_generation/papers/*
 .agent/*
 # C extensions
 *.so
-
+model_evaluation/main_agent/.agent/**
+model_evaluation/eval_agent/.agent/**
 # Distribution / packaging
 .Python
 build/
