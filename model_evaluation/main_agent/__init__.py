@@ -1,42 +1,17 @@
-"""Main agent module for attention analysis on Gemma 3 models.
+"""Main agent module for SAE interpretability on Gemma 3 models.
 
-This package provides modular utilities for:
-- Memory tracking and estimation
-- Gemma 3 model loading with validation
-- Attention extraction and analysis
-- SAE feature extraction via Gemma Scope 2
-- Visualization
+This package provides:
+- GemmaWithSAE: LangChain wrapper with SAE feature extraction
+- SAE loading and feature extraction via Gemma Scope 2
 
 Example:
     from model_evaluation.main_agent import (
-        GemmaModelConfig,
-        load_gemma_model,
-        analyze_prompt_lite,
+        GemmaWithSAE,
         load_gemma_scope_sae,
         extract_sae_features,
     )
 """
 
-from model_evaluation.main_agent.attention_extraction import (
-    CHAT_TEMPLATE_TOKENS,
-    GemmaInterpretabilityResult,
-    analyze_prompt,
-    analyze_prompt_lite,
-    calculate_attention_stats,
-    extract_attention,
-    identify_attention_anchors,
-    is_chat_template_token,
-    plot_attention_map,
-    visualize_token_importance,
-)
-from model_evaluation.main_agent.gemma_loader import (
-    GemmaModelConfig,
-    estimate_kv_cache_memory,
-    estimate_model_memory,
-    load_gemma_model,
-    print_model_info,
-    validate_memory_for_context,
-)
 from model_evaluation.main_agent.gemma_scope_sae import (
     JumpReLUSAE,
     SAEConfig,
@@ -49,42 +24,11 @@ from model_evaluation.main_agent.gemma_scope_sae import (
     visualize_token_activations,
     visualize_top_features_per_token,
 )
-from model_evaluation.main_agent.gemma_specs import (
-    GEMMA_SPECS,
-    GemmaSpec,
-    get_layer_types,
-    get_model_size,
-)
-from model_evaluation.main_agent.memory import (
-    MemoryTracker,
-    estimate_attention_matrix_memory,
-    estimate_kv_cache_size,
-    get_available_memory,
-    get_memory_usage,
-    get_model_memory_footprint,
-    print_memory_usage,
-    print_model_memory_footprint,
-)
+from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
 
 __all__ = [
-    # Attention extraction
-    "CHAT_TEMPLATE_TOKENS",
-    "GemmaInterpretabilityResult",
-    "analyze_prompt",
-    "analyze_prompt_lite",
-    "calculate_attention_stats",
-    "extract_attention",
-    "identify_attention_anchors",
-    "is_chat_template_token",
-    "plot_attention_map",
-    "visualize_token_importance",
-    # Gemma loader
-    "GemmaModelConfig",
-    "estimate_kv_cache_memory",
-    "estimate_model_memory",
-    "load_gemma_model",
-    "print_model_info",
-    "validate_memory_for_context",
+    # Wrapper
+    "GemmaWithSAE",
     # SAE extraction
     "JumpReLUSAE",
     "SAEConfig",
@@ -96,18 +40,4 @@ __all__ = [
     "load_gemma_scope_sae",
     "visualize_token_activations",
     "visualize_top_features_per_token",
-    # Specs
-    "GEMMA_SPECS",
-    "GemmaSpec",
-    "get_layer_types",
-    "get_model_size",
-    # Memory
-    "MemoryTracker",
-    "estimate_attention_matrix_memory",
-    "estimate_kv_cache_size",
-    "get_available_memory",
-    "get_memory_usage",
-    "get_model_memory_footprint",
-    "print_memory_usage",
-    "print_model_memory_footprint",
 ]

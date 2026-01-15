@@ -24,6 +24,10 @@ import os
 import torch
 from dotenv import load_dotenv
 from huggingface_hub import login
+from model_evaluation.main_agent.example_prompts import (
+    get_markdown_prompts,
+    get_plain_prompts,
+)
 
 from model_evaluation.main_agent import (
     GemmaModelConfig,
@@ -36,10 +40,6 @@ from model_evaluation.main_agent import (
     print_model_info,
     visualize_token_activations,
     visualize_top_features_per_token,
-)
-from model_evaluation.main_agent.example_prompts import (
-    get_markdown_prompts,
-    get_plain_prompts,
 )
 
 load_dotenv()

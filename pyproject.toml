@@ -90,6 +90,7 @@ exclude = [
     "build",
     "dist",
     "node_modules",
+    "model_evaluation/examples",
 ]
 
 [tool.ruff.lint]

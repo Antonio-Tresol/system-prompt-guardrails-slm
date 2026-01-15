@@ -10,9 +10,8 @@ It integrates:
 
 from typing import List
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
+from langchain_core.tools import BaseTool
 from langgraph.graph.graph import CompiledGraph
 
 from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
@@ -89,7 +88,7 @@ def create_safety_agent(
     """
     # 1. Select prompt
     system_prompt = MARKDOWN_SYSTEM_PROMPT if use_markdown_rules else PLAIN_SYSTEM_PROMPT
-    
+
     # 2. Load tools
     kb_tool = get_knowledge_base_tool()
     think_tool = get_think_tool()
@@ -97,10 +96,6 @@ def create_safety_agent(
 
     # 3. Create LangGraph Agent using langchain.agents.create_agent (Unified API)
     # This builds a graph-based agent runtime using LangGraph.
-    app = create_agent(
-        model, 
-        tools, 
-        system_prompt=system_prompt
-    )
+    app = create_agent(model, tools, system_prompt=system_prompt)
 
     return app

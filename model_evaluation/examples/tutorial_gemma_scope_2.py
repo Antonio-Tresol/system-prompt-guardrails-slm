@@ -28,21 +28,21 @@ First, let's load the model:
 For simplicity we do this straight from [HuggingFace transformers](https://huggingface.co/docs/transformers/en/index), rather than using an interpretability focused library like [TransformerLens](https://transformerlensorg.github.io/TransformerLens/) or [nnsight](https://nnsight.net/).
 """
 
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig, AutoTokenizer
-from huggingface_hub import hf_hub_download, notebook_login
-import numpy as np
-import einops
-import textwrap
-from typing import Literal
-import plotly.express as px
-from functools import partial
-import dataclasses
-from IPython.display import display, HTML
 import gc
+import textwrap
+from functools import partial
+from typing import Literal
+
+import einops
+import numpy as np
 import pandas as pd
-from safetensors.torch import load_file
+import plotly.express as px
 import torch
 import torch.nn as nn
+from huggingface_hub import hf_hub_download, notebook_login
+from IPython.display import HTML, display
+from safetensors.torch import load_file
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 """We load Gemma 3 1B, the second smallest model that Gemma Scope 2 works for (you can also try Gemma 3 270m, but in a Colab the 1B-size model should work fine).
 
@@ -51,13 +51,13 @@ We load the base model, not the chat model, since that's where our SAEs are trai
 
 notebook_login()
 
-torch.set_grad_enabled(False) # avoid blowing up mem
+torch.set_grad_enabled(False)  # avoid blowing up mem
 
 model = AutoModelForCausalLM.from_pretrained(
     "google/gemma-3-1b-pt",
-    device_map='auto',
+    device_map="auto",
 )
-tokenizer =  AutoTokenizer.from_pretrained("google/gemma-3-1b-pt")
+tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-1b-pt")
 
 """Now we've loaded the model, let's try running it! We give it a prompt (which we'll come back to later) and print the generated output:"""
 
@@ -66,7 +66,9 @@ prompt_physics = "The law of conservation of energy states that energy cannot be
 
 # Use the tokenizer to convert it to tokens
 # Note that this implicitly adds a special "Beginning of Sequence" or <bos> token to the start
-inputs_physics = tokenizer.encode(prompt_physics, return_tensors="pt", add_special_tokens=True).to("cuda")
+inputs_physics = tokenizer.encode(prompt_physics, return_tensors="pt", add_special_tokens=True).to(
+    "cuda"
+)
 print(inputs_physics)
 
 # Pass it in to the model and generate text
@@ -82,17 +84,21 @@ We'll also be using the instruction-tuned (IT) model, which behaves more like a 
 
 model_it = AutoModelForCausalLM.from_pretrained(
     "google/gemma-3-1b-it",
-    device_map='auto',
+    device_map="auto",
 )
 
+
 def format_prompt(user_prompt: str) -> str:
-  return f"""<start_of_turn>user
+    return f"""<start_of_turn>user
 {user_prompt}<end_of_turn>
 <start_of_turn>model
 """
 
+
 user_prompt = "What is your name?"
-it_inputs = tokenizer.encode(format_prompt(user_prompt), return_tensors="pt", add_special_tokens=True).to("cuda")
+it_inputs = tokenizer.encode(
+    format_prompt(user_prompt), return_tensors="pt", add_special_tokens=True
+).to("cuda")
 
 outputs = model_it.generate(input_ids=it_inputs, max_new_tokens=40)
 print(tokenizer.decode(outputs[0]))
@@ -114,7 +120,7 @@ Everything communicated from earlier layers to later layers must go via the resi
 """
 
 LAYER = 22  # options are {7, 13, 17, 22}
-WIDTH = "16k"   # options are {16k, 65k, 262k, 1m}
+WIDTH = "16k"  # options are {16k, 65k, 262k, 1m}
 L0 = "medium"  # options are {small, medium, big}
 
 path_to_params = hf_hub_download(
@@ -143,36 +149,38 @@ We have 5 important parameters below:
 You can ignore `affine_skip_connection` for now; we'll come back to it in the "transcoders" section.
 """
 
+
 class JumpReLUSAE(nn.Module):
-  def __init__(self, d_in, d_sae, affine_skip_connection=False):
-    # Note that we initialise these to zeros because we're loading in pre-trained weights.
-    # If you want to train your own SAEs then we recommend using blah
-    super().__init__()
-    self.w_enc = nn.Parameter(torch.zeros(d_in, d_sae))
-    self.w_dec = nn.Parameter(torch.zeros(d_sae, d_in))
-    self.threshold = nn.Parameter(torch.zeros(d_sae))
-    self.b_enc = nn.Parameter(torch.zeros(d_sae))
-    self.b_dec = nn.Parameter(torch.zeros(d_in))
-    if affine_skip_connection:
-      self.affine_skip_connection = nn.Parameter(torch.zeros(d_in, d_in))
-    else:
-      self.affine_skip_connection = None
+    def __init__(self, d_in, d_sae, affine_skip_connection=False):
+        # Note that we initialise these to zeros because we're loading in pre-trained weights.
+        # If you want to train your own SAEs then we recommend using blah
+        super().__init__()
+        self.w_enc = nn.Parameter(torch.zeros(d_in, d_sae))
+        self.w_dec = nn.Parameter(torch.zeros(d_sae, d_in))
+        self.threshold = nn.Parameter(torch.zeros(d_sae))
+        self.b_enc = nn.Parameter(torch.zeros(d_sae))
+        self.b_dec = nn.Parameter(torch.zeros(d_in))
+        if affine_skip_connection:
+            self.affine_skip_connection = nn.Parameter(torch.zeros(d_in, d_in))
+        else:
+            self.affine_skip_connection = None
 
-  def encode(self, input_acts):
-    pre_acts = input_acts @ self.w_enc + self.b_enc
-    mask = (pre_acts > self.threshold)
-    acts = mask * torch.nn.functional.relu(pre_acts)
-    return acts
+    def encode(self, input_acts):
+        pre_acts = input_acts @ self.w_enc + self.b_enc
+        mask = pre_acts > self.threshold
+        acts = mask * torch.nn.functional.relu(pre_acts)
+        return acts
 
-  def decode(self, acts):
-    return acts @ self.w_dec + self.b_dec
+    def decode(self, acts):
+        return acts @ self.w_dec + self.b_dec
 
-  def forward(self, x):
-    acts = self.encode(x)
-    recon = self.decode(acts)
-    if self.affine_skip_connection is not None:
-      return recon + x @ self.affine_skip_connection
-    return recon
+    def forward(self, x):
+        acts = self.encode(x)
+        recon = self.decode(acts)
+        if self.affine_skip_connection is not None:
+            return recon + x @ self.affine_skip_connection
+        return recon
+
 
 d_model, d_sae = params["w_enc"].shape
 sae = JumpReLUSAE(d_model, d_sae)
@@ -186,30 +194,31 @@ Let's first get out some activations from the model at the SAE target site. We'l
 We can gather activations at a site by registering a hook. To keep this local, we can wrap this in a function that registers a hook, runs the model, saving the intermediate activation, then removes the hook. (This is basically what TransformerLens is doing under the hood)
 """
 
+
 def gather_acts_hook(mod, inputs, outputs, cache: dict, key: str, use_input: bool):
-  """Generic hook function whic stores activations (either input or output of a particular PyTorch module)."""
-  acts = inputs[0].squeeze(0) if use_input else outputs[0]  # inputs usually have a batch dim
-  cache[key] = acts
-  return outputs
+    """Generic hook function whic stores activations (either input or output of a particular PyTorch module)."""
+    acts = inputs[0].squeeze(0) if use_input else outputs[0]  # inputs usually have a batch dim
+    cache[key] = acts
+    return outputs
 
 
 def gather_residual_activations(model, target_layer, inputs):
+    cache = {}
 
-  cache = {}
+    # Add a hook function to store the output of this layer of the model
+    handle = model.model.layers[target_layer].register_forward_hook(
+        partial(gather_acts_hook, cache=cache, key="resid_post", use_input=False)
+    )
 
-  # Add a hook function to store the output of this layer of the model
-  handle = model.model.layers[target_layer].register_forward_hook(
-      partial(gather_acts_hook, cache=cache, key="resid_post", use_input=False)
-  )
+    # Forward pass inside a try/except/finally block (useful just in case our hook breaks
+    # and we can't remove it!)
+    try:
+        _ = model.forward(inputs)
+    finally:
+        handle.remove()
 
-  # Forward pass inside a try/except/finally block (useful just in case our hook breaks
-  # and we can't remove it!)
-  try:
-    _ = model.forward(inputs)
-  finally:
-    handle.remove()
+    return cache["resid_post"]
 
-  return cache["resid_post"]
 
 target_act = gather_residual_activations(model, LAYER, inputs_physics)
 
@@ -243,37 +252,39 @@ Note that there's a bit of a gotcha here; our SAEs are *NOT* trained on the BOS 
 Another way we can evaluate our SAE is by looking at the **delta loss**, i.e. how much the model's prediction loss increases when we patch in the SAE's output. To do this we'll set up a new hook function:
 """
 
+
 def fwd_pass_with_sae_intervention(model, sae, target_layer, inputs):
-  # Forward pass to get logits & hidden activations
-  model_output_clean = model.forward(inputs, output_hidden_states=True)
-  logits_clean = model_output_clean.logits[0]  # (seq, d_vocab)
-  input_acts = model_output_clean.hidden_states[target_layer + 1][0]  # (seq, d_model)
+    # Forward pass to get logits & hidden activations
+    model_output_clean = model.forward(inputs, output_hidden_states=True)
+    logits_clean = model_output_clean.logits[0]  # (seq, d_vocab)
+    input_acts = model_output_clean.hidden_states[target_layer + 1][0]  # (seq, d_model)
 
-  # Get the SAE reconstruction
-  recon = sae.forward(input_acts.to(torch.float32))
+    # Get the SAE reconstruction
+    recon = sae.forward(input_acts.to(torch.float32))
 
-  def intervene_on_target_act_hook(mod, inputs, outputs):
-    outputs[0][0, 1:] = recon[1:]
-    return outputs
+    def intervene_on_target_act_hook(mod, inputs, outputs):
+        outputs[0][0, 1:] = recon[1:]
+        return outputs
 
-  handle = model.model.layers[target_layer].register_forward_hook(intervene_on_target_act_hook)
-  try:
-    model_output = model.forward(inputs)
-  finally:
-    handle.remove()
+    handle = model.model.layers[target_layer].register_forward_hook(intervene_on_target_act_hook)
+    try:
+        model_output = model.forward(inputs)
+    finally:
+        handle.remove()
 
-  # Get logits from this corrupted forward pass
-  logits = model_output.logits[0]
+    # Get logits from this corrupted forward pass
+    logits = model_output.logits[0]
 
-  return logits_clean, logits
+    return logits_clean, logits
 
 
 def cross_entropy_loss(logits: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
-  """Measures avg cross entropy loss."""
-  logprobs = logits[:-1].log_softmax(dim=-1)
-  tokens = tokens[1:]
-  correct_logprobs = logprobs[torch.arange(len(tokens)), tokens]
-  return -correct_logprobs
+    """Measures avg cross entropy loss."""
+    logprobs = logits[:-1].log_softmax(dim=-1)
+    tokens = tokens[1:]
+    correct_logprobs = logprobs[torch.arange(len(tokens)), tokens]
+    return -correct_logprobs
+
 
 logits_clean, logits_sae = fwd_pass_with_sae_intervention(model, sae, LAYER, inputs_physics)
 loss_clean = cross_entropy_loss(logits_clean, inputs_physics[0])
@@ -314,7 +325,7 @@ print(f"Top activating feature: {feature_idx}")
 top_acts, top_latents = sae_acts.squeeze().mean(0).topk(5)
 
 for act, idx in zip(top_acts, top_latents):
-  print(f"{act:>6.1f} | {idx}")
+    print(f"{act:>6.1f} | {idx}")
 
 """Latent 10679 seems to fire strongest. Let's inspect it:"""
 
@@ -323,11 +334,13 @@ feature_idx = 10679
 str_toks = tokenizer.tokenize(prompt_physics, add_special_tokens=True)
 activations = sae_acts[0, :, feature_idx].tolist()
 
+
 def html_activations(str_toks: list[str], activations: list[float]):
-  return "".join(
-      f'<span style="background-color: rgba(255,0,0,{v}); padding: 4px 0px;">{t}</span>'
-      for t, v in zip(str_toks, np.array(activations) / (1e-6 + np.max(activations)), strict=True)
-  )
+    return "".join(
+        f'<span style="background-color: rgba(255,0,0,{v}); padding: 4px 0px;">{t}</span>'
+        for t, v in zip(str_toks, np.array(activations) / (1e-6 + np.max(activations)), strict=True)
+    )
+
 
 display(HTML(html_activations(str_toks, activations)))
 
@@ -338,16 +351,16 @@ for prompt in [
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit",
     "Gravity describes how massive objects attract one another",
     "A charge accelerating through an electric field experiences a force",
-    "Chemical fuel stores energy in molecular bonds, which is released"
+    "Chemical fuel stores energy in molecular bonds, which is released",
 ]:
-  inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
-  tgt_acts = gather_residual_activations(model, LAYER, inputs)
+    inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
+    tgt_acts = gather_residual_activations(model, LAYER, inputs)
 
-  sae_acts = sae.encode(tgt_acts.to(torch.float32))
+    sae_acts = sae.encode(tgt_acts.to(torch.float32))
 
-  str_toks = tokenizer.tokenize(prompt, add_special_tokens=True)
-  display(HTML(html_activations(str_toks, sae_acts[0, :, feature_idx].tolist())))
-  print()
+    str_toks = tokenizer.tokenize(prompt, add_special_tokens=True)
+    display(HTML(html_activations(str_toks, sae_acts[0, :, feature_idx].tolist())))
+    print()
 
 """Okay, so it doesn't fire on the gravity sentence, but it does fire on both the other physics-related sentences as soon as they start talking about forces, energies or fields. This gives us a more specific idea of the concepts this latent might represent.
 
@@ -366,7 +379,7 @@ decoder_vector = sae.w_dec[feature_idx]  # shape (d_model,)
 top_activations, top_tokens = torch.topk(w_u_eff @ decoder_vector, k=10)
 
 for act, tok in zip(top_activations, top_tokens):
-  print(f"{act:.4f} | {tokenizer.decode(tok)}")
+    print(f"{act:.4f} | {tokenizer.decode(tok)}")
 
 """<!-- This definitely increases credence in our theory that this feature specifically relates to gravity! -->
 
@@ -375,33 +388,35 @@ Lastly, we can try **steering with this feature**. This means intervening in the
 You should see that when we steer the model on this "physical force feature", it starts talking more about physics (specifically forces like electromagnetism or gravity). Note that steering can often be fragile; it's difficult to choose the intervention layer and steering coefficient in a way that gives the expected behavioural change without also breaking the model's coherence. If you're curious, you can try increasing the `coeff` parameter below and seeing what happens!
 """
 
+
 def generate_with_steering(model, sae, inputs, target_layer, feature_idx: int, coeff: float):
+    def steering_hook(mod, inputs, outputs):
+        output = outputs[0]
+        # We have to be careful about KV caching! This logic handles different cases depending on
+        # whether this is the first forward pass or a cached pass.
+        if output.shape[1] == 1:
+            avg_norm = torch.norm(output, dim=-1)
+            output += coeff * avg_norm * sae.w_dec[feature_idx]
+        else:
+            avg_norm = torch.norm(output[0, 1:], dim=-1, keepdim=True)
+            output[0, 1:] += coeff * avg_norm * sae.w_dec[feature_idx]
 
-  def steering_hook(mod, inputs, outputs):
-    output = outputs[0]
-    # We have to be careful about KV caching! This logic handles different cases depending on
-    # whether this is the first forward pass or a cached pass.
-    if output.shape[1] == 1:
-      avg_norm = torch.norm(output, dim=-1)
-      output += coeff * avg_norm * sae.w_dec[feature_idx]
-    else:
-      avg_norm = torch.norm(output[0, 1:], dim=-1, keepdim=True)
-      output[0, 1:] += coeff * avg_norm * sae.w_dec[feature_idx]
+        return outputs
 
-    return outputs
+    handle = model.model.layers[target_layer].register_forward_hook(steering_hook)
+    try:
+        outputs = model.generate(input_ids=inputs, max_new_tokens=80, do_sample=False)
+        output_str = tokenizer.decode(outputs[0])
+    finally:
+        handle.remove()
 
-  handle = model.model.layers[target_layer].register_forward_hook(steering_hook)
-  try:
-    outputs = model.generate(input_ids=inputs, max_new_tokens=80, do_sample=False)
-    output_str = tokenizer.decode(outputs[0])
-  finally:
-    handle.remove()
-
-  return output_str.split("<start_of_turn>model")[1].strip()
+    return output_str.split("<start_of_turn>model")[1].strip()
 
 
 user_prompt = "Tell me an interesting fact."
-inputs = tokenizer.encode(format_prompt(user_prompt), return_tensors="pt", add_special_tokens=True).to("cuda")
+inputs = tokenizer.encode(
+    format_prompt(user_prompt), return_tensors="pt", add_special_tokens=True
+).to("cuda")
 
 print(user_prompt)
 print("======================= NO STEERING =======================")
@@ -440,7 +455,7 @@ LAYER = 17
 WIDTH = "16k"
 L0 = "medium"
 
-filename=f"transcoder/layer_{LAYER}_width_{WIDTH}_l0_{L0}_affine/params.safetensors"
+filename = f"transcoder/layer_{LAYER}_width_{WIDTH}_l0_{L0}_affine/params.safetensors"
 print(filename)
 
 path_to_params = hf_hub_download(
@@ -457,24 +472,27 @@ transcoder.cuda()
 
 """Once nice property about transcoders is that you can use them to find **circuits**. This is because (if you freeze attention patterns) we can model the relationship between two transcoder latents in different layers as being totally **linear**."""
 
+
 def gather_transcoder_activations(model, target_layer, inputs):
+    cache = {}
 
-  cache = {}
+    handle_input = model.model.layers[target_layer].pre_feedforward_layernorm.register_forward_hook(
+        partial(gather_acts_hook, cache=cache, key="transcoder_input", use_input=False)
+    )
+    handle_target = model.model.layers[
+        target_layer
+    ].post_feedforward_layernorm.register_forward_hook(
+        partial(gather_acts_hook, cache=cache, key="transcoder_target", use_input=False)
+    )
 
-  handle_input = model.model.layers[target_layer].pre_feedforward_layernorm.register_forward_hook(
-      partial(gather_acts_hook, cache=cache, key="transcoder_input", use_input=False)
-  )
-  handle_target = model.model.layers[target_layer].post_feedforward_layernorm.register_forward_hook(
-      partial(gather_acts_hook, cache=cache, key="transcoder_target", use_input=False)
-  )
+    try:
+        _ = model.forward(inputs)
+    finally:
+        handle_input.remove()
+        handle_target.remove()
 
-  try:
-    _ = model.forward(inputs)
-  finally:
-    handle_input.remove()
-    handle_target.remove()
+    return cache
 
-  return cache
 
 prompt = "The quick brown fox jumped over the lazy dog"
 inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
@@ -487,7 +505,7 @@ sae_target = cache["transcoder_target"].to(torch.float32).cuda()
 sae_acts = transcoder.encode(sae_input)
 recon = transcoder.forward(sae_input)
 
-mse = torch.mean((recon[1:] - sae_target[1:].float())**2)
+mse = torch.mean((recon[1:] - sae_target[1:].float()) ** 2)
 var = sae_target[1:].float().var()
 fvu = mse / var
 l0 = (sae_acts[1:] > 0).float().sum(-1).mean()
@@ -500,53 +518,54 @@ print(f"Fraction of variance unexplained: {mse / var:.2%}")
 Let's test this, with a slight modification of our previous patching function:
 """
 
+
 def fwd_pass_with_sae_intervention(model, sae, target_layer, inputs):
+    # Forward pass to get clean logits, plus activations for intervention:
 
-  # Forward pass to get clean logits, plus activations for intervention:
+    input_acts = None
 
-  input_acts = None
+    def cache_inputs(mod, inputs, outputs):
+        """This will store the transcoder input (i.e. the pre-MLP layernorm output)."""
+        nonlocal input_acts
+        input_acts = outputs[0]
+        return outputs
 
-  def cache_inputs(mod, inputs, outputs):
-    """This will store the transcoder input (i.e. the pre-MLP layernorm output)."""
-    nonlocal input_acts
-    input_acts = outputs[0]
-    return outputs
+    handle_caching = model.model.layers[
+        target_layer
+    ].pre_feedforward_layernorm.register_forward_hook(cache_inputs)
+    try:
+        model_output_clean = model.forward(inputs)
+    finally:
+        handle_caching.remove()
 
-  handle_caching = model.model.layers[target_layer].pre_feedforward_layernorm.register_forward_hook(
-      cache_inputs
-  )
-  try:
-    model_output_clean = model.forward(inputs)
-  finally:
-    handle_caching.remove()
+    # Forward pass to get corrupted logits, from injecting SAE output at target site:
 
-  # Forward pass to get corrupted logits, from injecting SAE output at target site:
+    recon = sae.forward(input_acts[1:].to(torch.float32))
 
-  recon = sae.forward(input_acts[1:].to(torch.float32))
+    def inject_outputs(mod, inputs, outputs):
+        """This will patch the SAE's reconstruction into the model's MLP output."""
+        output = outputs[0]
+        output[1:] = recon
+        return outputs
 
-  def inject_outputs(mod, inputs, outputs):
-    """This will patch the SAE's reconstruction into the model's MLP output."""
-    output = outputs[0]
-    output[1:] = recon
-    return outputs
+    handle_injecting = model.model.layers[
+        target_layer
+    ].post_feedforward_layernorm.register_forward_hook(inject_outputs)
+    try:
+        model_output_corrupted = model.forward(inputs)
+    finally:
+        handle_injecting.remove()
 
-  handle_injecting = model.model.layers[target_layer].post_feedforward_layernorm.register_forward_hook(
-      inject_outputs
-  )
-  try:
-    model_output_corrupted = model.forward(inputs)
-  finally:
-    handle_injecting.remove()
-
-  return model_output_clean.logits[0], model_output_corrupted.logits[0]
+    return model_output_clean.logits[0], model_output_corrupted.logits[0]
 
 
 def cross_entropy_loss(logits: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
-  """Measures avg cross entropy loss."""
-  logprobs = logits[:-1].log_softmax(dim=-1)
-  tokens = tokens[1:]
-  correct_logprobs = logprobs[torch.arange(len(tokens)), tokens]
-  return -correct_logprobs
+    """Measures avg cross entropy loss."""
+    logprobs = logits[:-1].log_softmax(dim=-1)
+    tokens = tokens[1:]
+    correct_logprobs = logprobs[torch.arange(len(tokens)), tokens]
+    return -correct_logprobs
+
 
 logits_clean, logits_sae = fwd_pass_with_sae_intervention(model, transcoder, LAYER, inputs_physics)
 loss_clean = cross_entropy_loss(logits_clean, inputs_physics[0])
@@ -558,13 +577,16 @@ print(f"Delta loss: {loss_sae.mean() - loss_clean.mean():.4f}")
 
 str_toks = tokenizer.tokenize(tokenizer.decode(inputs_physics[0]))
 
-df = {"token": list(range(len(str_toks)-1)), "Clean": loss_clean.tolist(), "SAE": loss_sae.tolist()}
-px.line(
-    df, x="token", y=["Clean","SAE"], labels={"value": "Loss"}
-).update_layout(
+df = {
+    "token": list(range(len(str_toks) - 1)),
+    "Clean": loss_clean.tolist(),
+    "SAE": loss_sae.tolist(),
+}
+px.line(df, x="token", y=["Clean", "SAE"], labels={"value": "Loss"}).update_layout(
     xaxis=dict(tickvals=df["token"], ticktext=str_toks[1:], tickangle=45),
     title="Cross-entropy loss with SAE intervention",
-    width=800, height=400
+    width=800,
+    height=400,
 ).show()
 
 """# Other models
@@ -578,49 +600,48 @@ We finish with a speedrun of other models in the GemmaScope 2 release. These inc
 ## MLP-output and attention-output SAEs
 """
 
+
 def gather_mlp_out_activations(model, target_layer, inputs):
-  act_cache = {}
-  handle = model.model.layers[target_layer].post_feedforward_layernorm.register_forward_hook(
-      partial(gather_acts_hook, key="acts", cache=act_cache, use_input=False)
-  )
-  try:
-    _ = model.forward(inputs)
-  finally:
-    handle.remove()
-  return act_cache.pop("acts")
+    act_cache = {}
+    handle = model.model.layers[target_layer].post_feedforward_layernorm.register_forward_hook(
+        partial(gather_acts_hook, key="acts", cache=act_cache, use_input=False)
+    )
+    try:
+        _ = model.forward(inputs)
+    finally:
+        handle.remove()
+    return act_cache.pop("acts")
 
 
-def gather_attn_out_activations(model, target_layer, inputs):
-  act_cache = {}
-  handle = model.model.layers[target_layer].self_attn.o_proj.register_forward_hook(
-      partial(gather_acts_hook, key="acts", cache=act_cache, use_input=True)
-  )
-  try:
-    _ = model.forward(inputs)
-  finally:
-    handle.remove()
-  return act_cache.pop("acts")
+def gather_attn_out_activations(model: Any, target_layer: int, inputs: Any) -> Any:
+    act_cache = {}
+    handle = model.model.layers[target_layer].self_attn.o_proj.register_forward_hook(
+        partial(gather_acts_hook, key="acts", cache=act_cache, use_input=True)
+    )
+    try:
+        _ = model.forward(inputs)
+    finally:
+        handle.remove()
+    return act_cache.pop("acts")
+
 
 """First, the MLP-output SAE:"""
 
-def load_sae(category: str, layer: int, width: int, l0: str, affine: bool = False) -> JumpReLUSAE:
-  affine_str = "_affine" if affine else ""
-  path_to_params = hf_hub_download(
-      repo_id="google/gemma-scope-2-1b-pt",
-      filename=f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/params.safetensors",
-  )
-  params = load_file(path_to_params)
-  d_model, d_sae = params["w_enc"].shape
-  sae = JumpReLUSAE(d_model, d_sae)
-  sae.load_state_dict(params)
-  return sae.cuda()
 
-mlp_sae = load_sae(
-    category="mlp_out",
-    layer=17,
-    width="16k",
-    l0="medium"
-)
+def load_sae(category: str, layer: int, width: int, l0: str, affine: bool = False) -> JumpReLUSAE:
+    affine_str = "_affine" if affine else ""
+    path_to_params = hf_hub_download(
+        repo_id="google/gemma-scope-2-1b-pt",
+        filename=f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/params.safetensors",
+    )
+    params = load_file(path_to_params)
+    d_model, d_sae = params["w_enc"].shape
+    sae = JumpReLUSAE(d_model, d_sae)
+    sae.load_state_dict(params)
+    return sae.cuda()
+
+
+mlp_sae = load_sae(category="mlp_out", layer=17, width="16k", l0="medium")
 
 prompt = "The quick brown fox jumped over the lazy dog"
 inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
@@ -630,7 +651,7 @@ sae_input = gather_mlp_out_activations(model, LAYER, inputs)
 sae_acts = mlp_sae.encode(sae_input.to(torch.float32))
 recon = mlp_sae.decode(sae_acts)
 
-mse = torch.mean((recon[1:] - sae_input[1:].float())**2)
+mse = torch.mean((recon[1:] - sae_input[1:].float()) ** 2)
 var = sae_input[1:].float().var()
 fvu = mse / var
 l0 = (sae_acts[1:] > 0).float().sum(-1).mean()
@@ -640,12 +661,7 @@ print(f"Fraction of variance unexplained: {mse / var:.2%}")
 
 """Next, we'll look at the **attention output SAE**, which reconstructs the pre-layernorm values of the attention layer. Note that this means if you want to do any kind of circuit analysis, you should probably be freezing layernorm (and remember that these values are summed over the head dimension)."""
 
-attn_sae = load_sae(
-    category="attn_out",
-    layer=17,
-    width="16k",
-    l0="medium"
-)
+attn_sae = load_sae(category="attn_out", layer=17, width="16k", l0="medium")
 
 prompt = "The quick brown fox jumped over the lazy dog"
 inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
@@ -654,7 +670,7 @@ sae_input = gather_attn_out_activations(model, LAYER, inputs)
 sae_acts = attn_sae.encode(sae_input.to(torch.float32))
 recon = attn_sae.decode(sae_acts)
 
-mse = torch.mean((recon[1:] - sae_input[1:].float())**2)
+mse = torch.mean((recon[1:] - sae_input[1:].float()) ** 2)
 var = sae_input[1:].float().var()
 fvu = mse / var
 l0 = (sae_acts[1:] > 0).float().sum(-1).mean()
@@ -667,46 +683,61 @@ print(f"Fraction of variance unexplained: {mse / var:.2%}")
 First, we need a new architecture, to handle stacked encoder matrices (each for a different layer) and all-to-all decoder matrices (which can map from earlier to later layers).
 """
 
+
 class JumpReLUMultiLayerSAE(nn.Module):
-  def __init__(self, d_in, d_sae, num_layers, affine_skip_connection=False):
-    # Note that we initialise these to zeros because we're loading in pre-trained weights.
-    # If you want to train your own SAEs then we recommend using blah
-    super().__init__()
-    self.w_enc = nn.Parameter(torch.zeros(num_layers, d_in, d_sae))
-    self.w_dec = nn.Parameter(torch.zeros(num_layers, d_sae, num_layers, d_in))
-    self.threshold = nn.Parameter(torch.zeros(num_layers, d_sae))
-    self.b_enc = nn.Parameter(torch.zeros(num_layers, d_sae))
-    self.b_dec = nn.Parameter(torch.zeros(num_layers, d_in))
-    if affine_skip_connection:
-      self.affine_skip_connection = nn.Parameter(torch.zeros(num_layers, d_in, d_in))
-    else:
-      self.affine_skip_connection = None
+    def __init__(
+        self, d_in: int, d_sae: int, num_layers: int, affine_skip_connection: bool = False
+    ) -> None:
+        # Note that we initialise these to zeros because we're loading in pre-trained weights.
+        # If you want to train your own SAEs then we recommend using blah
+        super().__init__()
+        self.w_enc = nn.Parameter(torch.zeros(num_layers, d_in, d_sae))
+        self.w_dec = nn.Parameter(torch.zeros(num_layers, d_sae, num_layers, d_in))
+        self.threshold = nn.Parameter(torch.zeros(num_layers, d_sae))
+        self.b_enc = nn.Parameter(torch.zeros(num_layers, d_sae))
+        self.b_dec = nn.Parameter(torch.zeros(num_layers, d_in))
+        if affine_skip_connection:
+            self.affine_skip_connection = nn.Parameter(torch.zeros(num_layers, d_in, d_in))
+        else:
+            self.affine_skip_connection = None
 
-  def encode(self, input_acts):
-    pre_acts = einops.einsum(
-        input_acts, self.w_enc, "... layer d_in, layer d_in d_sae -> ... layer d_sae"
-    ) + self.b_enc
-    mask = (pre_acts > self.threshold)
-    acts = mask * torch.nn.functional.relu(pre_acts)
-    return acts
+    def encode(self, input_acts: torch.Tensor) -> torch.Tensor:
+        pre_acts = (
+            einops.einsum(
+                input_acts, self.w_enc, "... layer d_in, layer d_in d_sae -> ... layer d_sae"
+            )
+            + self.b_enc
+        )
+        mask = pre_acts > self.threshold
+        acts = mask * torch.nn.functional.relu(pre_acts)
+        return acts
 
-  def decode(self, acts):
-    return einops.einsum(
-        acts, self.w_dec, "... layer_in d_sae, layer_in d_sae layer_out d_dec -> ... layer_out d_dec"
-    ) + self.b_dec
+    def decode(self, acts: torch.Tensor) -> torch.Tensor:
+        return (
+            einops.einsum(
+                acts,
+                self.w_dec,
+                "... layer_in d_sae, layer_in d_sae layer_out d_dec -> ... layer_out d_dec",
+            )
+            + self.b_dec
+        )
 
-  def forward(self, x):
-    acts = self.encode(x)
-    recon = self.decode(acts)
-    if self.affine_skip_connection is not None:
-      return recon + einops.einsum(
-          x, self.affine_skip_connection, "... layer d_in, layer d_in d_dec -> ... layer d_dec"
-      )
-    return recon
+    def forward(self, x):
+        acts = self.encode(x)
+        recon = self.decode(acts)
+        if self.affine_skip_connection is not None:
+            return recon + einops.einsum(
+                x,
+                self.affine_skip_connection,
+                "... layer d_in, layer d_in d_dec -> ... layer d_dec",
+            )
+        return recon
+
 
 """Next, some new logic for loading in our params (which are split over layers):"""
 
 NUM_LAYERS = 26
+
 
 def load_multi_layer_sae(
     category: Literal["clt", "crosscoder"],
@@ -714,54 +745,48 @@ def load_multi_layer_sae(
     width: str,
     l0: str,
     affine: bool = False,
-    device = "cuda",
+    device="cuda",
     half_precision: bool = False,
 ) -> JumpReLUMultiLayerSAE:
-
-  affine_str = "_affine" if affine else ""
-
-  params_list = []
-
-  if category == "crosscoder":
-    # Crosscoder names are e.g. "layer_7_13_17_22_width_262k_l0_medium"
-    layers = [int(x * num_layers + 0.5) for x in [0.25, 0.5, 0.65, 0.85]]
-    print(f"Loading crosscoder for layers {layers}")
-    subcategory = f"layer_{'_'.join(str(x) for x in layers)}_width_{width}_l0_{l0}{affine_str}"
-  else:
-    assert category == "clt"
-    # CLT names are just e.g. "width_262k_l0_medium_affine"
-    print("Loading CLT for all layers")
-    layers = list(range(num_layers))
     affine_str = "_affine" if affine else ""
-    subcategory = f"width_{width}_l0_{l0}{affine_str}"
 
-  for layer_idx in range(len(layers)):
-    path_to_params = hf_hub_download(
-        repo_id="google/gemma-scope-2-1b-pt",
-        filename=f"{category}/{subcategory}/params_layer_{layer_idx}.safetensors",
-    )
-    params = load_file(path_to_params, device=device)
-    params_list.append(params)
+    params_list = []
 
-  # We stack all params along the leading "layer" dimension
-  params = {
-      k: torch.stack([params[k] for params in params_list])
-      for k in params_list[0].keys()
-  }
-  d_model, d_sae = params["w_enc"].shape[1:]
-  sae = JumpReLUMultiLayerSAE(d_model, d_sae, len(layers), affine)
-  sae.load_state_dict(params)
-  if half_precision:
-    sae = sae.half()
-  return sae
+    if category == "crosscoder":
+        # Crosscoder names are e.g. "layer_7_13_17_22_width_262k_l0_medium"
+        layers = [int(x * num_layers + 0.5) for x in [0.25, 0.5, 0.65, 0.85]]
+        print(f"Loading crosscoder for layers {layers}")
+        subcategory = f"layer_{'_'.join(str(x) for x in layers)}_width_{width}_l0_{l0}{affine_str}"
+    else:
+        assert category == "clt"
+        # CLT names are just e.g. "width_262k_l0_medium_affine"
+        print("Loading CLT for all layers")
+        layers = list(range(num_layers))
+        affine_str = "_affine" if affine else ""
+        subcategory = f"width_{width}_l0_{l0}{affine_str}"
+
+    for layer_idx in range(len(layers)):
+        path_to_params = hf_hub_download(
+            repo_id="google/gemma-scope-2-1b-pt",
+            filename=f"{category}/{subcategory}/params_layer_{layer_idx}.safetensors",
+        )
+        params = load_file(path_to_params, device=device)
+        params_list.append(params)
+
+    # We stack all params along the leading "layer" dimension
+    params = {k: torch.stack([params[k] for params in params_list]) for k in params_list[0].keys()}
+    d_model, d_sae = params["w_enc"].shape[1:]
+    sae = JumpReLUMultiLayerSAE(d_model, d_sae, len(layers), affine)
+    sae.load_state_dict(params)
+    if half_precision:
+        sae = sae.half()
+    return sae
+
 
 """And now we can test out our crosscoder, which was trained on layers (7, 13, 17, 22), chosen because these are spaced 25%, 50%, 65% and 85% of the way through the model."""
 
 crosscoder = load_multi_layer_sae(
-    category="crosscoder",
-    num_layers=NUM_LAYERS,
-    width="262k",
-    l0="medium"
+    category="crosscoder", num_layers=NUM_LAYERS, width="262k", l0="medium"
 )
 
 {k: v.shape for k, v in crosscoder.named_parameters()}
@@ -770,20 +795,22 @@ crosscoder.cuda()
 
 """Let's look at its performance too:"""
 
+
 def gather_crosscoder_activations(model, target_layers, inputs):
-  act_cache = {}
-  handles = []
-  for layer in target_layers:
-    handle = model.model.layers[layer].register_forward_hook(
-        partial(gather_acts_hook, key=f"acts_{layer}", cache=act_cache, use_input=False)
-    )
-    handles.append(handle)
-  try:
-    _ = model.forward(inputs)
-  finally:
-    for handle in handles:
-      handle.remove()
-  return torch.stack([act_cache[f"acts_{layer}"][0] for layer in target_layers], axis=-2)
+    act_cache = {}
+    handles = []
+    for layer in target_layers:
+        handle = model.model.layers[layer].register_forward_hook(
+            partial(gather_acts_hook, key=f"acts_{layer}", cache=act_cache, use_input=False)
+        )
+        handles.append(handle)
+    try:
+        _ = model.forward(inputs)
+    finally:
+        for handle in handles:
+            handle.remove()
+    return torch.stack([act_cache[f"acts_{layer}"][0] for layer in target_layers], axis=-2)
+
 
 layers = [7, 13, 17, 22]
 
@@ -794,7 +821,7 @@ sae_input = gather_crosscoder_activations(model, layers, inputs).to(torch.float3
 sae_acts = crosscoder.encode(sae_input)
 recon = crosscoder.forward(sae_input)
 
-mse = torch.mean((recon[1:] - sae_input[1:].float())**2)
+mse = torch.mean((recon[1:] - sae_input[1:].float()) ** 2)
 var = sae_input[1:].float().var()
 fvu = mse / var
 l0 = (sae_acts[1:] > 0).float().sum((-1, -2)).mean()  # sum over (layer, feature) dims
@@ -809,32 +836,31 @@ model_output_clean = model.forward(inputs_physics, output_hidden_states=True)
 logits_clean = model_output_clean.logits[0]  # (seq, d_vocab)
 
 # Extract all crosscoder input activations
-input_acts = torch.stack([
-    model_output_clean.hidden_states[layer + 1][0]
-    for layer in layers
-], axis=1)  # (seq, layers, d_model)
+input_acts = torch.stack(
+    [model_output_clean.hidden_states[layer + 1][0] for layer in layers], axis=1
+)  # (seq, layers, d_model)
 
 # Get the SAE reconstruction
 recon = crosscoder.forward(input_acts.to(torch.float32))
 
+
 def intervene_with_crosscoder(mod, inputs, outputs, layer):
-  outputs[0][layers.index(layer), 1:] = recon[1:, layers.index(layer)]
-  return outputs
+    outputs[0][layers.index(layer), 1:] = recon[1:, layers.index(layer)]
+    return outputs
+
 
 # Add hooks to intervene at every layer we plan to get the loss from
 handles = []
 for layer in layers:
-  handle = model.model.layers[layer].register_forward_hook(
-      partial(intervene_with_crosscoder, layer=layer)
-  )
-  handles.append(handle)
+    handle = model.model.layers[layer].register_forward_hook(
+        partial(intervene_with_crosscoder, layer=layer)
+    )
+    handles.append(handle)
 try:
-  model_output = model.forward(
-      einops.repeat(inputs_physics, "1 seq -> 4 seq")
-  )
+    model_output = model.forward(einops.repeat(inputs_physics, "1 seq -> 4 seq"))
 finally:
-  for handle in handles:
-    handle.remove()
+    for handle in handles:
+        handle.remove()
 
 # Get logits from this corrupted forward pass
 logits_sae = model_output.logits[0]
@@ -843,9 +869,9 @@ loss_clean = cross_entropy_loss(logits_clean, inputs_physics[0])
 print(f"Loss (clean): {loss_clean.mean():.4f}")
 
 for label, logits in zip(layers, model_output.logits):
-  loss_sae = cross_entropy_loss(logits, inputs_physics[0])
-  delta_loss = loss_sae - loss_clean
-  print(f"Delta loss at layer {label:02}: {delta_loss.mean():.4f}")
+    loss_sae = cross_entropy_loss(logits, inputs_physics[0])
+    delta_loss = loss_sae - loss_clean
+    print(f"Delta loss at layer {label:02}: {delta_loss.mean():.4f}")
 
 """For a given L0 (in this case 50), we expect crosscoders to have a higher delta loss per layer than the corresponding SAE, because their sparsity budget has to be allocated across all layers.
 
@@ -856,9 +882,9 @@ Finally we'll look at CLTs - we've done most of the work for them already, since
 
 # Code to delete previous models, freeing up space:
 try:
-  del crosscoder, attn_sae, mlp_sae, transcoder, sae
+    del crosscoder, attn_sae, mlp_sae, transcoder, sae
 except NameError:
-  print("Already deleted.")
+    print("Already deleted.")
 
 gc.collect()
 torch.cuda.empty_cache()
@@ -876,27 +902,29 @@ clt = load_multi_layer_sae(
 
 clt.cuda()
 
-def gather_clt_activations(model, num_layers, inputs):
-  act_cache = {}
-  handles = []
-  for layer in range(num_layers):
-    handle_input = model.model.layers[layer].pre_feedforward_layernorm.register_forward_hook(
-        partial(gather_acts_hook, cache=act_cache, key=f"input_{layer}", use_input=False)
-    )
-    handle_target = model.model.layers[layer].post_feedforward_layernorm.register_forward_hook(
-        partial(gather_acts_hook, cache=act_cache, key=f"target_{layer}", use_input=False)
-    )
-    handles.extend([handle_input, handle_target])
-  try:
-    _ = model.forward(inputs)
-  finally:
-    for handle in handles:
-      handle.remove()
 
-  return (
-      torch.stack([act_cache[f"input_{layer}"] for layer in range(num_layers)], axis=-2),
-      torch.stack([act_cache[f"target_{layer}"] for layer in range(num_layers)], axis=-2),
-  )
+def gather_clt_activations(model, num_layers, inputs):
+    act_cache = {}
+    handles = []
+    for layer in range(num_layers):
+        handle_input = model.model.layers[layer].pre_feedforward_layernorm.register_forward_hook(
+            partial(gather_acts_hook, cache=act_cache, key=f"input_{layer}", use_input=False)
+        )
+        handle_target = model.model.layers[layer].post_feedforward_layernorm.register_forward_hook(
+            partial(gather_acts_hook, cache=act_cache, key=f"target_{layer}", use_input=False)
+        )
+        handles.extend([handle_input, handle_target])
+    try:
+        _ = model.forward(inputs)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    return (
+        torch.stack([act_cache[f"input_{layer}"] for layer in range(num_layers)], axis=-2),
+        torch.stack([act_cache[f"target_{layer}"] for layer in range(num_layers)], axis=-2),
+    )
+
 
 sae_input, sae_target = gather_clt_activations(model, NUM_LAYERS, inputs_physics)
 sae_input = sae_input.half()
@@ -905,7 +933,7 @@ sae_target = sae_target.half()
 sae_acts = clt.encode(sae_input)
 recon = clt.forward(sae_input)
 
-mse = torch.mean((recon[1:] - sae_target[1:].float())**2)
+mse = torch.mean((recon[1:] - sae_target[1:].float()) ** 2)
 var = sae_target[1:].float().var()
 fvu = mse / var
 l0 = (sae_acts[1:] > 0).float().sum((-1, -2)).mean()  # sum over (layer, feature) dims
@@ -925,24 +953,24 @@ sae_input, sae_target = gather_clt_activations(model, NUM_LAYERS, inputs_physics
 # Get the SAE reconstruction
 recon = clt.forward(sae_input.half())
 
+
 def intervene_with_clt(mod, inputs, outputs, layer):
-  outputs[layer, 1:] = recon[1:, layer]
-  return outputs
+    outputs[layer, 1:] = recon[1:, layer]
+    return outputs
+
 
 # Add hooks to intervene at every layer we plan to get the loss from
 handles = []
 for layer in range(NUM_LAYERS):
-  handle = model.model.layers[layer].post_feedforward_layernorm.register_forward_hook(
-      partial(intervene_with_clt, layer=layer)
-  )
-  handles.append(handle)
+    handle = model.model.layers[layer].post_feedforward_layernorm.register_forward_hook(
+        partial(intervene_with_clt, layer=layer)
+    )
+    handles.append(handle)
 try:
-  model_output = model.forward(
-      einops.repeat(inputs_physics, f"1 seq -> {NUM_LAYERS} seq")
-  )
+    model_output = model.forward(einops.repeat(inputs_physics, f"1 seq -> {NUM_LAYERS} seq"))
 finally:
-  for handle in handles:
-    handle.remove()
+    for handle in handles:
+        handle.remove()
 
 # Get logits from this corrupted forward pass
 logits_sae = model_output.logits[0]
@@ -951,9 +979,9 @@ loss_clean = cross_entropy_loss(logits_clean, inputs_physics[0])
 print(f"Loss (clean): {loss_clean.mean():.4f}")
 
 for layer, logits in enumerate(model_output.logits):
-  loss_sae = cross_entropy_loss(logits, inputs_physics[0])
-  delta_loss = loss_sae - loss_clean
-  print(f"Delta loss at layer {layer:02}: {delta_loss.mean():.4f}")
+    loss_sae = cross_entropy_loss(logits, inputs_physics[0])
+    delta_loss = loss_sae - loss_clean
+    print(f"Delta loss at layer {layer:02}: {delta_loss.mean():.4f}")
 
 """## IT SAEs & displaying top activations
 
@@ -961,6 +989,7 @@ Here, you can load in example activations data to see what kinds of prompts maxi
 
 When we finish adding full Neuronpedia support, we'll add to this setion!
 """
+
 
 def load_example_data(
     model_size: str = "27b",
@@ -971,49 +1000,52 @@ def load_example_data(
     affine: bool = False,
     instruction_tuned: bool = True,
 ) -> dict[str, np.ndarray]:
-  affine_str = "_affine" if affine else ""
-  repo_id=f"google/gemma-scope-2-{model_size}-{'it' if instruction_tuned else 'pt'}"
-  filename=f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/examples.safetensors"
-  print(repo_id)
-  print(filename)
-  path_to_data = hf_hub_download(
-      repo_id=f"google/gemma-scope-2-{model_size}-{'it' if instruction_tuned else 'pt'}",
-      filename=f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/examples.safetensors",
-  )
-  return load_file(path_to_data)
+    affine_str = "_affine" if affine else ""
+    repo_id = f"google/gemma-scope-2-{model_size}-{'it' if instruction_tuned else 'pt'}"
+    filename = f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/examples.safetensors"
+    print(repo_id)
+    print(filename)
+    path_to_data = hf_hub_download(
+        repo_id=f"google/gemma-scope-2-{model_size}-{'it' if instruction_tuned else 'pt'}",
+        filename=f"{category}/layer_{layer}_width_{width}_l0_{l0}{affine_str}/examples.safetensors",
+    )
+    return load_file(path_to_data)
+
 
 example_data = load_example_data(layer=53)
 
 {k: v.shape for k, v in example_data.items()}
 
+
 def to_str_tokens(tokens: list[int]) -> list[str]:
-  str_tokens = tokenizer.convert_ids_to_tokens(tokens)
-  for i, t in enumerate(str_tokens):
-    if t.startswith("▁"):
-      str_tokens[i] = " " + t[1:]
-  return str_tokens
+    str_tokens = tokenizer.convert_ids_to_tokens(tokens)
+    for i, t in enumerate(str_tokens):
+        if t.startswith("▁"):
+            str_tokens[i] = " " + t[1:]
+    return str_tokens
 
 
 def span(str_tok, act, logit, max_logit):
-  # Activtion determines background colour
-  bg_color = f"rgba(0,255,0,{act:.3f})"
-  # Logit effect determines underline color: blue (+ve), red (-ve)
-  logit_normed = logit / max_logit if max_logit > 1e-9 else 0.0
-  logit_normed = max(-1.0, min(1.0, logit_normed))
-  u_color = (
-      f"rgba(0,0,255,{logit_normed:.3f})"
-      if logit_normed >= 0.0
-      else f"rgba(0,0,255,{-logit_normed:.3f})"
-  )
-  # Use thick bottom border for underline
-  style = f"background-color: {bg_color}; border-bottom: 3px solid {u_color};"
-  return f'<span style="{style}">{str_tok}</span>'
+    # Activtion determines background colour
+    bg_color = f"rgba(0,255,0,{act:.3f})"
+    # Logit effect determines underline color: blue (+ve), red (-ve)
+    logit_normed = logit / max_logit if max_logit > 1e-9 else 0.0
+    logit_normed = max(-1.0, min(1.0, logit_normed))
+    u_color = (
+        f"rgba(0,0,255,{logit_normed:.3f})"
+        if logit_normed >= 0.0
+        else f"rgba(0,0,255,{-logit_normed:.3f})"
+    )
+    # Use thick bottom border for underline
+    style = f"background-color: {bg_color}; border-bottom: 3px solid {u_color};"
+    return f'<span style="{style}">{str_tok}</span>'
 
 
-def join_str_tok_list(str_toks, acts, logits, max_logit):
-  str_toks = [x.replace("\n", "⏎") for x in str_toks]
-  logits = [0.0] + logits.tolist()[:-1]  # logit effect is for the *next* token
-  return "".join([span(*args, max_logit) for args in zip(str_toks, acts, logits, strict=True)])
+def join_str_tok_list(str_toks, acts, logits, max_logit: float):
+    str_toks = [x.replace("\n", "⏎") for x in str_toks]
+    logits = [0.0] + logits.tolist()[:-1]  # logit effect is for the *next* token
+    return "".join([span(*args, max_logit) for args in zip(str_toks, acts, logits, strict=True)])
+
 
 escape_html = lambda x: x.replace("<", "&lt;").replace(">", "&gt;")
 
@@ -1026,99 +1058,99 @@ def inspect_feature(
     reuse_same_sequences: bool = True,
     max_logit_effect: float | None = None,
 ) -> None:
-  """Visualizes the top-activating sequences for a particular feature."""
-  tokens = example_data["tokens"]
-  activations = example_data["activations"]
-  positions = example_data["positions"]
-  seq_ids = example_data["seq_ids"]
-  feature_frequencies = example_data["feature_frequencies"]
-  logit_effects = example_data["logit_effects"]
+    """Visualizes the top-activating sequences for a particular feature."""
+    tokens = example_data["tokens"]
+    activations = example_data["activations"]
+    positions = example_data["positions"]
+    seq_ids = example_data["seq_ids"]
+    feature_frequencies = example_data["feature_frequencies"]
+    logit_effects = example_data["logit_effects"]
 
-  # Get activations, cropped past the point where it's not actually active (we
-  # just padded the array out to the same length as the other features)
-  activations = activations[global_feature]
-  n_acts = (activations > 0).sum().item()
-  if n_acts == 0:
-    print(f"No activations for feature {global_feature}")
-    return
-  activations = activations[:n_acts]
-  seq_ids = seq_ids[global_feature][:n_acts]
-  positions = positions[global_feature][:n_acts]
-  logit_effects = logit_effects[global_feature][:n_acts]
-  if max_logit_effect is None:
-    max_logit_effect = np.abs(logit_effects).max().item()
+    # Get activations, cropped past the point where it's not actually active (we
+    # just padded the array out to the same length as the other features)
+    activations = activations[global_feature]
+    n_acts = (activations > 0).sum().item()
+    if n_acts == 0:
+        print(f"No activations for feature {global_feature}")
+        return
+    activations = activations[:n_acts]
+    seq_ids = seq_ids[global_feature][:n_acts]
+    positions = positions[global_feature][:n_acts]
+    logit_effects = logit_effects[global_feature][:n_acts]
+    if max_logit_effect is None:
+        max_logit_effect = np.abs(logit_effects).max().item()
 
-  # Print out frequency in 2 different ways (cached value & dataframe counts)
-  print(f"Inspecting feature {global_feature}")
-  print(f"Frequency: {feature_frequencies[global_feature]:.2e}")
-  if "top_tokens" in example_data:
-    str_tokens = to_str_tokens(example_data["top_tokens"][global_feature])
-    print(f"Top tokens: {str_tokens}")
+    # Print out frequency in 2 different ways (cached value & dataframe counts)
+    print(f"Inspecting feature {global_feature}")
+    print(f"Frequency: {feature_frequencies[global_feature]:.2e}")
+    if "top_tokens" in example_data:
+        str_tokens = to_str_tokens(example_data["top_tokens"][global_feature])
+        print(f"Top tokens: {str_tokens}")
 
-  # Make a list of formatted sequences for each of our top activations
-  top_activations = []
-  formatted_sequences = []
-  position_tuples = []
-  max_act = max(activations[0], 1e-12)
-  while len(formatted_sequences) < max_examples:
-    # Finish if we don't have any more nonzero examples we can take
-    if not seq_ids.shape[0]:
-      break
+    # Make a list of formatted sequences for each of our top activations
+    top_activations = []
+    formatted_sequences = []
+    position_tuples = []
+    max_act = max(activations[0], 1e-12)
+    while len(formatted_sequences) < max_examples:
+        # Finish if we don't have any more nonzero examples we can take
+        if not seq_ids.shape[0]:
+            break
 
-    # Pick the max-activation sequence not yet chosen
-    idx = np.argmax(activations).item()
-    seq_id = seq_ids[idx].item()
-    position = positions[idx].item()
-    activation = activations[idx].item()
-    position_tuples.append(f"{seq_id},{position}")
-    top_activations.append(activation)
+        # Pick the max-activation sequence not yet chosen
+        idx = np.argmax(activations).item()
+        seq_id = seq_ids[idx].item()
+        position = positions[idx].item()
+        activation = activations[idx].item()
+        position_tuples.append(f"{seq_id},{position}")
+        top_activations.append(activation)
 
-    # Get the string tokens, maybe adjusting the buffer if this token is too
-    # close to the start or end of the sequence
-    true_buf = (
-        min(buf[0], position),
-        min(buf[1], tokens.shape[1] - 1 - position),
-    )
-    str_toks = to_str_tokens(
-        tokens[seq_id, position - true_buf[0] : position + true_buf[1] + 1]
-    )
+        # Get the string tokens, maybe adjusting the buffer if this token is too
+        # close to the start or end of the sequence
+        true_buf = (
+            min(buf[0], position),
+            min(buf[1], tokens.shape[1] - 1 - position),
+        )
+        str_toks = to_str_tokens(
+            tokens[seq_id, position - true_buf[0] : position + true_buf[1] + 1]
+        )
 
-    # Initialize buffers for activations and logit effects
-    seq_len_window = true_buf[1] + true_buf[0] + 1
-    acts = np.zeros((seq_len_window,))
-    logits = np.zeros((seq_len_window,))
-    str_toks = list(map(escape_html, str_toks))
+        # Initialize buffers for activations and logit effects
+        seq_len_window = true_buf[1] + true_buf[0] + 1
+        acts = np.zeros((seq_len_window,))
+        logits = np.zeros((seq_len_window,))
+        str_toks = list(map(escape_html, str_toks))
 
-    # Get the tokens & activations in a padded region around that sequence
-    seq_id_mask = seq_ids == seq_id
-    pos_diff = positions - position
-    position_mask = (-pos_diff < true_buf[0]) & (pos_diff < true_buf[1])
-    full_mask = seq_id_mask & position_mask
+        # Get the tokens & activations in a padded region around that sequence
+        seq_id_mask = seq_ids == seq_id
+        pos_diff = positions - position
+        position_mask = (-pos_diff < true_buf[0]) & (pos_diff < true_buf[1])
+        full_mask = seq_id_mask & position_mask
 
-    # Apply mask to both activations and logit effects
-    for pos, act, logit in zip(positions[full_mask], activations[full_mask], logit_effects[full_mask]):
-      offset = pos - position + true_buf[0]
-      acts[offset] = act / max_act
-      logits[offset] = logit
-    formatted_sequences.append(join_str_tok_list(str_toks, acts, logits, max_logit_effect))
+        # Apply mask to both activations and logit effects
+        for pos, act, logit in zip(
+            positions[full_mask], activations[full_mask], logit_effects[full_mask]
+        ):
+            offset = pos - position + true_buf[0]
+            acts[offset] = act / max_act
+            logits[offset] = logit
+        formatted_sequences.append(join_str_tok_list(str_toks, acts, logits, max_logit_effect))
 
-    # Filter out all other activations with the same sequence
-    filter_mask = ~(full_mask if reuse_same_sequences else seq_id_mask)
-    activations = activations[filter_mask]
-    seq_ids = seq_ids[filter_mask]
-    positions = positions[filter_mask]
-    logit_effects = logit_effects[filter_mask]
+        # Filter out all other activations with the same sequence
+        filter_mask = ~(full_mask if reuse_same_sequences else seq_id_mask)
+        activations = activations[filter_mask]
+        seq_ids = seq_ids[filter_mask]
+        positions = positions[filter_mask]
+        logit_effects = logit_effects[filter_mask]
 
-  output_df = pd.DataFrame({
-      "position": position_tuples,
-      "activation": top_activations,
-      "tokens": formatted_sequences,
-  }).reset_index(drop=True)
-  display(
-      output_df.style.set_properties(
-          subset=["tokens"], **{"font-family": "Helvetica"}
-      )
-  )
+    output_df = pd.DataFrame(
+        {
+            "position": position_tuples,
+            "activation": top_activations,
+            "tokens": formatted_sequences,
+        }
+    ).reset_index(drop=True)
+    display(output_df.style.set_properties(subset=["tokens"], **{"font-family": "Helvetica"}))
 
 
 inspect_feature(example_data, global_feature=50705)
