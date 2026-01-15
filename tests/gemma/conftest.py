@@ -30,7 +30,7 @@ def gemma_sae() -> tuple:
     return load_gemma_scope_sae(
         model_size="4b",
         model_type="it",
-        layer=29,
+        layer=22,
         width="16k",
         l0_size="medium",
     )

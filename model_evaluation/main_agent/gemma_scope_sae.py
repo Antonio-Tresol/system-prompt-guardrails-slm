@@ -42,10 +42,6 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
-# =============================================================================
-# JumpReLU SAE Architecture (from Gemma Scope 2 tutorial)
-# =============================================================================
-
 
 class JumpReLUSAE(nn.Module):
     """JumpReLU Sparse Autoencoder as used in Gemma Scope 2.
@@ -106,11 +102,6 @@ class JumpReLUSAE(nn.Module):
         return self.decode(acts)
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-# HuggingFace repo IDs for Gemma Scope 2 SAEs
 SAE_REPOS = {
     "1b": {
         "pt": "google/gemma-scope-2-1b-pt",
@@ -130,8 +121,7 @@ SAE_REPOS = {
     },
 }
 
-# Available SAE layers for each model size (from HuggingFace repos)
-# These are at approximately 25%, 50%, 65%, 85% depth
+
 AVAILABLE_LAYERS = {
     "1b": [7, 13, 17, 22],  # 26 layers total
     "4b": [9, 17, 22, 29],  # 34 layers total
@@ -139,10 +129,10 @@ AVAILABLE_LAYERS = {
     "27b": [16, 31, 40, 53],  # 62 layers total
 }
 
-# Recommended layers (approximately 85% depth for abstract concepts)
+
 RECOMMENDED_LAYERS = {
     "1b": 22,
-    "4b": 29,
+    "4b": 22,
     "12b": 41,  # Was 40, corrected to 41
     "27b": 53,
 }
@@ -194,11 +184,6 @@ class SAEFeatureResult:
     top_activations: torch.Tensor
     l0: float
     fvu: float
-
-
-# =============================================================================
-# SAE Loading
-# =============================================================================
 
 
 def load_gemma_scope_sae(
@@ -260,11 +245,6 @@ def load_gemma_scope_sae(
     return sae, config
 
 
-# =============================================================================
-# Activation Gathering
-# =============================================================================
-
-
 def _gather_acts_hook(
     mod: nn.Module,
     inputs: tuple,
@@ -296,24 +276,13 @@ def _get_model_layers(model: PreTrainedModel) -> torch.nn.ModuleList:
         if hasattr(lm, "layers"):
             return lm.layers
 
-    # Try different paths for different Gemma architectures
     if hasattr(model, "model"):
         inner = model.model
-        # Gemma 3 text model (Gemma3TextModel has layers inside model)
         if hasattr(inner, "text_model") and hasattr(inner.text_model, "layers"):
             return inner.text_model.layers
-        # Check for language_model inside model
-        if hasattr(inner, "language_model"):
-            lm = inner.language_model
-            if hasattr(lm, "model") and hasattr(lm.model, "layers"):
-                return lm.model.layers
-            if hasattr(lm, "layers"):
-                return lm.layers
-        # Gemma 2/3 text-only (layers directly inside model)
         if hasattr(inner, "layers"):
             return inner.layers
 
-    # Fallback: try direct access
     if hasattr(model, "layers"):
         return model.layers
 
@@ -367,11 +336,6 @@ def gather_residual_activations(
     return cache["resid_post"]
 
 
-# =============================================================================
-# Feature Extraction
-# =============================================================================
-
-
 def extract_sae_features(
     *,
     model: PreTrainedModel,
@@ -405,10 +369,8 @@ def extract_sae_features(
     """
     device = next(model.parameters()).device
 
-    # Tokenize input
     inputs = tokenizer(text, return_tensors="pt").to(device)
 
-    # Generate response
     with torch.inference_mode():
         generated_ids = model.generate(
             **inputs,
@@ -417,35 +379,28 @@ def extract_sae_features(
             temperature=0.7,
         )
 
-    # Get prompt length and decode answer
     prompt_len = inputs.input_ids.shape[-1]
     answer_ids = generated_ids[0][prompt_len:]
     answer = tokenizer.decode(answer_ids, skip_special_tokens=True)
 
-    # Convert all tokens for labeling
     all_tokens = tokenizer.convert_ids_to_tokens(generated_ids[0])
 
-    # Gather residual activations at the target layer
     residual_acts = gather_residual_activations(
         model=model,
         target_layer=sae_config.layer,
         input_ids=generated_ids,
     )
 
-    # Encode through SAE to get sparse features (SAE expects float32)
     with torch.inference_mode():
         feature_acts = sae.encode(residual_acts.to(torch.float32))
         recon = sae.decode(feature_acts)
 
-    # Calculate metrics (skip BOS token at index 0)
     l0 = (feature_acts[1:] > 0).float().sum(-1).mean().item()
 
-    # Fraction of variance unexplained
     mse = torch.mean((recon[1:] - residual_acts[1:].float()) ** 2)
     var = residual_acts[1:].float().var()
     fvu = (mse / var).item() if var > 0 else 0.0
 
-    # Get top-k features per position
     top_activations, top_features = feature_acts.topk(k=top_k, dim=-1)
 
     return SAEFeatureResult(
@@ -458,11 +413,6 @@ def extract_sae_features(
         l0=l0,
         fvu=fvu,
     )
-
-
-# =============================================================================
-# Analysis Utilities
-# =============================================================================
 
 
 def get_top_features_summary(
@@ -486,15 +436,12 @@ def get_top_features_summary(
         start, end = position_range
         acts = result.feature_acts[start:end]
 
-    # Sum activations across positions for each feature
     feature_sums = acts.sum(dim=0)
 
-    # Get non-zero features and their sums
     nonzero_mask = feature_sums > 0
     feature_indices = torch.where(nonzero_mask)[0]
     feature_values = feature_sums[nonzero_mask]
 
-    # Sort by activation
     sorted_indices = feature_values.argsort(descending=True)
 
     return {int(feature_indices[i].item()): float(feature_values[i].item()) for i in sorted_indices}
@@ -537,7 +484,6 @@ def compare_feature_activations(
         in_a = "✓" if feat in summary_a else " "
         print(f"  {i + 1:2d}. Feature {feat:6d}: {val:8.2f} [{in_a}]")
 
-    # Find unique features
     unique_a = set(summary_a.keys()) - set(summary_b.keys())
     unique_b = set(summary_b.keys()) - set(summary_a.keys())
     shared = set(summary_a.keys()) & set(summary_b.keys())
@@ -546,11 +492,6 @@ def compare_feature_activations(
     print(f"  Unique to {label_a}: {len(unique_a)}")
     print(f"  Unique to {label_b}: {len(unique_b)}")
     print(f"  Shared: {len(shared)}")
-
-
-# =============================================================================
-# Token Visualization
-# =============================================================================
 
 
 def _escape_html(text: str) -> str:
@@ -569,17 +510,14 @@ def _token_span(token: str, activation: float, max_act: float) -> str:
     Returns:
         HTML span string with background color based on activation.
     """
-    # Normalize activation to [0, 1]
     norm_act = activation / max_act if max_act > 1e-9 else 0.0
     norm_act = max(0.0, min(1.0, norm_act))
 
-    # Green background with intensity based on activation
     bg_color = f"rgba(0, 200, 0, {norm_act:.3f})"
 
-    # Clean up token display
     display_token = _escape_html(token)
     display_token = display_token.replace("\n", "⏎")
-    if display_token.startswith("▁"):
+    if display_token.startswith(" "):
         display_token = " " + display_token[1:]
 
     style = (
@@ -622,16 +560,12 @@ def visualize_token_activations(
         acts = result.feature_acts.sum(dim=-1).cpu().numpy()
         title = "Total Feature Activations"
 
-    # Skip BOS token (index 0) - its activations are often outliers
     start_idx = 1 if skip_bos else 0
-
-    # Use max from non-BOS tokens for normalization
     max_act = acts[start_idx:].max() if acts[start_idx:].max() > 0 else 1.0
 
     html_parts = [f"<h4>{title}</h4>"]
     html_parts.append('<div style="line-height: 2; font-size: 14px;">')
 
-    # Prompt tokens (skip BOS)
     if show_prompt:
         html_parts.append('<span style="color: #666; font-size: 12px;">Prompt: </span>')
         for i in range(start_idx, prompt_len):

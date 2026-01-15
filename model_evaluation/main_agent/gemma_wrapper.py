@@ -44,7 +44,6 @@ class GemmaWithSAE(BaseChatModel):
     Gemma Scope 2. SAE activations are always captured during generation.
     """
 
-    # Private attributes for non-Pydantic fields
     _model: Any = PrivateAttr()
     _tokenizer: Any = PrivateAttr()
     _sae: Any = PrivateAttr()
@@ -52,7 +51,6 @@ class GemmaWithSAE(BaseChatModel):
     _bound_tools: List[Dict[str, Any]] = PrivateAttr(default_factory=list)
     _last_activations: Optional[SAEFeatureResult] = PrivateAttr(default=None)
 
-    # Public config fields
     model_name: str = "gemma-3-sae"
     max_tokens: int = 512
 
@@ -127,13 +125,9 @@ class GemmaWithSAE(BaseChatModel):
         Returns:
             ChatResult containing the generated message.
         """
-        # Debug logging
         self._log_debug_messages(messages)
 
-        # 1. Prepare messages (inject tools if needed)
         final_messages = self._inject_tool_prompt(messages)
-
-        # 2. Format messages for tokenizer
         formatted = self._format_messages(final_messages)
         prompt = self._apply_chat_template(formatted)
 
@@ -141,7 +135,6 @@ class GemmaWithSAE(BaseChatModel):
         if len(prompt) < 1000:
             logger.debug("Prompt preview: %s", prompt)
 
-        # 3. Generate with SAE capture
         result = extract_sae_features(
             model=self._model,
             tokenizer=self._tokenizer,
@@ -153,7 +146,6 @@ class GemmaWithSAE(BaseChatModel):
         self._last_activations = result
         output_text = result.answer
 
-        # 4. Parse output and create AIMessage
         content, tool_calls = self._parse_tool_calls(output_text)
 
         msg = (
@@ -163,10 +155,6 @@ class GemmaWithSAE(BaseChatModel):
         )
 
         return ChatResult(generations=[ChatGeneration(message=msg)])
-
-    # =========================================================================
-    # Private Helper Methods
-    # =========================================================================
 
     def _log_debug_messages(self, messages: List[BaseMessage]) -> None:
         """Log incoming messages for debugging."""
@@ -186,11 +174,10 @@ class GemmaWithSAE(BaseChatModel):
         tool_prompt = self._get_tool_definitions_prompt()
 
         if final_messages and isinstance(final_messages[0], SystemMessage):
-            # Append to existing system message
+            # Context: Append to existing system message to consolidate instructions
             new_content = str(final_messages[0].content) + tool_prompt
             final_messages[0] = SystemMessage(content=new_content)
         else:
-            # Prepend new system message
             final_messages.insert(0, SystemMessage(content=tool_prompt))
 
         return final_messages
@@ -239,7 +226,6 @@ class GemmaWithSAE(BaseChatModel):
                 content = self._format_tool_output(msg)
                 formatted_messages.append({"role": "user", "content": content})
 
-        # Append any orphan system buffer as a user message
         if system_buffer:
             formatted_messages.append({"role": "user", "content": system_buffer})
 
@@ -298,7 +284,6 @@ class GemmaWithSAE(BaseChatModel):
             if tool_call:
                 tool_calls.append(tool_call)
 
-        # Remove tool blocks from text to get final content
         content = re.sub(pattern, "", text, flags=re.DOTALL).strip()
         return content, tool_calls
 
@@ -320,10 +305,8 @@ class GemmaWithSAE(BaseChatModel):
             args = {}
             for keyword in call_node.keywords:
                 try:
-                    # Safe evaluation of literals
                     args[keyword.arg] = ast.literal_eval(keyword.value)
                 except Exception:
-                    # Fallback to string representation
                     args[keyword.arg] = str(keyword.value)
 
             return {
@@ -347,7 +330,6 @@ class GemmaWithSAE(BaseChatModel):
             name = func.get("name", "unknown")
             desc = func.get("description", "")
 
-            # Extract parameters for signature
             properties = func.get("parameters", {}).get("properties", {})
             param_parts = []
             for param_name, param_info in properties.items():
