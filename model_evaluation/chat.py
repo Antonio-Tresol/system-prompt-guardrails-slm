@@ -1,11 +1,17 @@
-"""Terminal-based chat interface for testing the Safety Agent.
+"""Terminal-based chat interface for MI-SLM Agent testing.
 
 A Claude Code-inspired terminal UI with stunning visuals, streaming,
 real-time trajectory visualization, and modern design for mechanistic
-interpretability testing.
+interpretability testing with Gemma Scope 2 SAE analysis.
 
 Usage:
     uv run python -m model_evaluation.chat
+
+Model Selection:
+    On startup, choose from:
+    1. Gemma 3 4B IT (bf16) - Full precision (VRAM calculated dynamically)
+    2. Gemma 3 4B IT (int4) - 4-bit quantized (VRAM calculated dynamically)
+    3. Gemma 3 12B IT (int4) - Larger model, 4-bit quantized (VRAM calculated dynamically)
 
 Commands:
     /quit, /exit, /q - Exit the chat
@@ -196,6 +202,8 @@ ICONS = {
     "question": "❓",
     "list": "📋",
     "dice": "🎲",
+    "select": "►",
+    "model": "🤖",
 }
 
 
@@ -719,30 +727,50 @@ class StreamingTrajectory:
         self.start_time = time.time()
         self._response_started = False
         self.final_response: str | None = None
+        self.chunks_retrieved: list[dict] = []
+        self._pending_step_display: bool = False
+        self._last_node_was_tools: bool = False
 
     def display_node_change(self, *, node_name: str) -> None:
-        """Display when agent transitions to a new node."""
+        """Display when agent transitions to a new node.
+
+        For the "model" node, we defer showing "Model thinking..." until we see
+        a tool call. If no tool call is made (i.e., final response generation),
+        we skip the step display entirely since the response streams immediately.
+        """
         if node_name == self.current_node:
             return
 
+        previous_node = self.current_node
         self.current_node = node_name
 
         if node_name == "model":
             self.agent_steps += 1
-            step_badge = styled(
-                f" Step {self.agent_steps} ",
-                Colors.BG_BLUE,
-                Colors.WHITE,
-            )
-            thinking_icon = styled(ICONS["thought"], BRAND_ACCENT)
-            print(f"\n  {step_badge} {thinking_icon} Model thinking...")
+            # Defer step display - will show if tool calls are made
+            self._pending_step_display = True
+            self._last_node_was_tools = previous_node == "tools"
         elif node_name == "tools":
             tools_icon = styled(ICONS["tools"], BRAND_INFO)
             exec_msg = styled("Executing tools...", BRAND_INFO)
             print(f"\n  {tools_icon} {exec_msg}")
 
+    def _show_pending_step(self) -> None:
+        """Show the pending step display if not yet shown."""
+        if self._pending_step_display:
+            self._pending_step_display = False
+            step_badge = styled(
+                f" Step {self.agent_steps} ",
+                Colors.BG_BLUE,
+                Colors.WHITE,
+            )
+            reasoning_icon = styled(ICONS["thought"], BRAND_ACCENT)
+            print(f"\n  {step_badge} {reasoning_icon} Reasoning...")
+
     def display_tool_call(self, *, tool_name: str, tool_args: dict) -> None:
         """Display a tool call being made."""
+        # Show pending step display now that we know there's a tool call
+        self._show_pending_step()
+
         self.tool_calls_made.append(tool_name)
         tool_styled = styled(tool_name, BRAND_PRIMARY, Colors.BOLD)
         args_str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items())
@@ -758,6 +786,87 @@ class StreamingTrajectory:
         result_display = result[:100] + "..." if len(result) > 100 else result
         result_styled = styled(result_display, Colors.DIM)
         print(f"    {check} {name_styled}: {result_styled}")
+
+    def display_search_results(self, *, event_data: dict) -> None:
+        """Display search results metadata from knowledge base search.
+
+        Args:
+            event_data: Custom stream event data from search_knowledge_base tool.
+        """
+        event_type = event_data.get("event", "")
+
+        if event_type == "search_start":
+            query = event_data.get("query", "")
+            num_results = event_data.get("num_results", 5)
+            search_icon = styled("🔍", BRAND_INFO)
+            query_styled = styled(f'"{query}"', BRAND_PRIMARY)
+            print(f"    {search_icon} Searching for {query_styled} (top {num_results})")
+
+        elif event_type == "search_complete":
+            chunks_found = event_data.get("chunks_found", 0)
+            chunks = event_data.get("chunks", [])
+
+            if chunks_found == 0:
+                warn_icon = styled(ICONS["warning"], BRAND_WARNING)
+                print(f"    {warn_icon} No chunks found")
+                return
+
+            # Store chunks for later reference
+            self.chunks_retrieved = chunks
+
+            # Display chunk summary
+            docs_icon = styled("📚", BRAND_SUCCESS)
+            count_styled = styled(str(chunks_found), BRAND_SUCCESS, Colors.BOLD)
+            print(f"    {docs_icon} Found {count_styled} relevant chunks:")
+            print("")
+
+            # Display each chunk's metadata
+            for chunk in chunks:
+                rank = chunk.get("rank", "?")
+                score = chunk.get("score", 0.0)
+                title = chunk.get("document_title", "Unknown")
+                section = chunk.get("section", "")
+                subsection = chunk.get("subsection", "")
+                privacy = chunk.get("privacy_level", "public")
+
+                # Privacy badge with color
+                if privacy == "private":
+                    privacy_badge = styled(f"[{privacy.upper()}]", BRAND_ERROR, Colors.BOLD)
+                elif privacy == "mixed":
+                    privacy_badge = styled(f"[{privacy.upper()}]", BRAND_WARNING, Colors.BOLD)
+                else:
+                    privacy_badge = styled(f"[{privacy.upper()}]", BRAND_SUCCESS)
+
+                # Score color based on relevance
+                if score < 0.5:
+                    score_color = BRAND_SUCCESS
+                elif score < 1.0:
+                    score_color = BRAND_WARNING
+                else:
+                    score_color = BRAND_ERROR
+                score_styled = styled(f"{score:.3f}", score_color)
+
+                # Build source path
+                source_parts = [title]
+                if section:
+                    source_parts.append(section)
+                if subsection:
+                    source_parts.append(subsection)
+                source_path = " › ".join(source_parts)
+
+                # Truncate source path if too long
+                max_source_len = 50
+                if len(source_path) > max_source_len:
+                    source_path = source_path[: max_source_len - 3] + "..."
+
+                source_styled = styled(source_path, Colors.DIM)
+
+                # Rank badge
+                rank_badge = styled(f"#{rank}", BRAND_ACCENT)
+
+                print(f"      {rank_badge} {privacy_badge} score={score_styled} {source_styled}")
+
+            print("")
 
     def start_response_stream(self) -> None:
         """Initialize response streaming display."""
@@ -867,20 +976,14 @@ class StreamingTrajectory:
 
 def display_welcome_banner() -> None:
     """Display the welcome banner with ASCII art."""
-    # Each line has consistent indentation for proper display
+    # MI-SLM ASCII art banner
     banner_lines = [
-        "    ███████╗ █████╗ ███████╗███████╗████████╗██╗   ██╗",
-        "    ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝╚██╗ ██╔╝",
-        "    ███████╗███████║█████╗  █████╗     ██║    ╚████╔╝ ",
-        "    ╚════██║██╔══██║██╔══╝  ██╔══╝     ██║     ╚██╔╝  ",
-        "    ███████║██║  ██║██║     ███████╗   ██║      ██║   ",
-        "    ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝   ╚═╝      ╚═╝   ",
-        "     █████╗  ██████╗ ███████╗███╗   ██╗████████╗      ",
-        "    ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝      ",
-        "    ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║         ",
-        "    ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║         ",
-        "    ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║         ",
-        "    ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝         ",
+        "    ███╗   ███╗██╗      ███████╗██╗     ███╗   ███╗",
+        "    ████╗ ████║██║      ██╔════╝██║     ████╗ ████║",
+        "    ██╔████╔██║██║█████╗███████╗██║     ██╔████╔██║",
+        "    ██║╚██╔╝██║██║╚════╝╚════██║██║     ██║╚██╔╝██║",
+        "    ██║ ╚═╝ ██║██║      ███████║███████╗██║ ╚═╝ ██║",
+        "    ╚═╝     ╚═╝╚═╝      ╚══════╝╚══════╝╚═╝     ╚═╝",
     ]
 
     # Print with gradient effect line by line
@@ -896,11 +999,15 @@ def display_welcome_banner() -> None:
         print(styled(line, Colors.rgb(r, g, b)))
         time.sleep(0.02)  # Subtle animation delay
 
-    # Subtitle
-    subtitle = "Mechanistic Interpretability Testing Interface"
+    # Subtitles - centered
+    subtitle1 = "Small Language Model Agent Testing Interface"
+    subtitle2 = "feat. Gemma Scope 2 SAE Analysis"
     print("")
-    print(styled(" " * 8 + subtitle, Colors.DIM, Colors.ITALIC))
-    print(styled(" " * 12 + "with SAE Analysis & Langfuse Tracing", Colors.DIM))
+    # Center based on banner width (~52 chars)
+    padding1 = (52 - len(subtitle1)) // 2
+    padding2 = (52 - len(subtitle2)) // 2
+    print(styled(" " * padding1 + subtitle1, Colors.DIM, Colors.ITALIC))
+    print(styled(" " * padding2 + subtitle2, Colors.DIM))
     print("")
 
 
@@ -1188,60 +1295,62 @@ def display_questions_browser(
     print("")
 
 
-def display_question_detail(*, question: Question) -> None:
-    """Display full details of a question before sending.
+def _display_width(text: str) -> int:
+    """Calculate the display width of text, accounting for wide characters like emojis.
+
+    Emojis and other wide characters typically display as 2 columns in terminals,
+    but Python's len() counts them as 1 or 2 code points depending on the emoji.
 
     Args:
-        question: The question to display.
+        text: Text to measure.
+
+    Returns:
+        Estimated display width in terminal columns.
     """
-    print("")
+    width = 0
+    for char in text:
+        code_point = ord(char)
+        # Emoji ranges (simplified - covers most common emojis)
+        if (
+            0x1F300 <= code_point <= 0x1F9FF  # Misc Symbols, Emoticons, etc.
+            or 0x2600 <= code_point <= 0x26FF  # Misc Symbols
+            or 0x2700 <= code_point <= 0x27BF  # Dingbats
+            or 0x1F600 <= code_point <= 0x1F64F  # Emoticons
+            or 0x1F680 <= code_point <= 0x1F6FF  # Transport symbols
+        ):
+            width += 2  # Emojis are typically 2 columns wide
+        else:
+            width += 1
+    return width
 
-    # Top border
-    border_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
-    print(f"  {styled('╭' + '─' * 60 + '╮', border_color)}")
 
-    # Title
-    icon = ICONS["malicious"] if question.is_malicious else ICONS["safe"]
-    title = f"  │  {icon} Question {styled(question.id, border_color, Colors.BOLD)}"
-    padding = 60 - len(f"  {icon} Question {question.id}") + 1
-    print(f"{title}{' ' * padding}{styled('│', border_color)}")
+def _wrap_text(text: str, *, max_width: int) -> list[str]:
+    """Word-wrap text to fit within max_width.
 
-    # Separator
-    print(f"  {styled('├' + '─' * 60 + '┤', border_color)}")
+    Args:
+        text: Text to wrap.
+        max_width: Maximum width per line.
 
-    # Metadata
-    cat_label = styled("Category:", Colors.DIM)
-    cat_value = styled(question.category.capitalize(), BRAND_INFO)
-    meta_line1 = f"  │  {cat_label} {cat_value}"
-    padding1 = 60 - len(f"  {cat_label} {cat_value}") + 11
-    print(f"{meta_line1}{' ' * padding1}{styled('│', border_color)}")
-
-    origin_label = styled("Origin:", Colors.DIM)
-    origin_value = styled(question.origin, BRAND_INFO)
-    meta_line2 = f"  │  {origin_label}   {origin_value}"
-    padding2 = 60 - len(f"  {origin_label}   {origin_value}") + 11
-    print(f"{meta_line2}{' ' * padding2}{styled('│', border_color)}")
-
-    type_label = styled("Type:", Colors.DIM)
-    if question.is_malicious:
-        type_value = styled("Malicious (attempts private access)", BRAND_ERROR)
-    else:
-        type_value = styled("Safe (legitimate question)", BRAND_SUCCESS)
-    meta_line3 = f"  │  {type_label}     {type_value}"
-    padding3 = 60 - len(f"  {type_label}     Malicious (attempts private access)") + 11
-    print(f"{meta_line3}{' ' * padding3}{styled('│', border_color)}")
-
-    # Separator
-    print(f"  {styled('├' + '─' * 60 + '┤', border_color)}")
-
-    # Question text (word-wrapped)
-    words = question.text.split()
+    Returns:
+        List of wrapped lines.
+    """
+    words = text.split()
     lines = []
     current_line = ""
-    max_width = 56
 
     for word in words:
-        if len(current_line) + len(word) + 1 <= max_width:
+        # If word itself is too long, split it
+        if len(word) > max_width:
+            if current_line:
+                lines.append(current_line)
+                current_line = ""
+            # Split long word
+            while len(word) > max_width:
+                lines.append(word[:max_width])
+                word = word[max_width:]
+            if word:
+                current_line = word
+        elif len(current_line) + len(word) + 1 <= max_width:
             current_line = f"{current_line} {word}".strip()
         else:
             if current_line:
@@ -1251,15 +1360,162 @@ def display_question_detail(*, question: Question) -> None:
     if current_line:
         lines.append(current_line)
 
-    for line in lines:
-        padding = 58 - len(line)
-        left_border = styled("│", border_color)
-        right_border = styled("│", border_color)
-        line_content = styled(line, Colors.WHITE)
-        print(f"  {left_border}  {line_content}{' ' * padding}{right_border}")
+    return lines
+
+
+def _print_box_line(
+    *,
+    text: str,
+    border_color: str,
+    content_width: int = 58,
+    text_color: str | None = None,
+    display_width: int | None = None,
+) -> None:
+    """Print a single line inside the box with proper padding.
+
+    Args:
+        text: Text content to print.
+        border_color: Color for the border.
+        content_width: Width available for content.
+        text_color: Optional color for the text.
+        display_width: Pre-calculated display width (for emoji-aware centering).
+    """
+    # Use provided display width or calculate from text
+    actual_width = display_width if display_width is not None else _display_width(text)
+    padding = content_width - actual_width
+    left_border = styled("│", border_color)
+    right_border = styled("│", border_color)
+    content = styled(text, text_color) if text_color else text
+    print(f"  {left_border}  {content}{' ' * max(0, padding)}{right_border}")
+
+
+def _print_wrapped_field(
+    *,
+    label: str,
+    value: str,
+    border_color: str,
+    value_color: str,
+    content_width: int = 58,
+    label_width: int = 10,
+) -> None:
+    """Print a labeled field with word-wrapping for long values.
+
+    Args:
+        label: Field label (e.g., "Origin:").
+        value: Field value to display.
+        border_color: Color for the border.
+        value_color: Color for the value text.
+        content_width: Total width available for content.
+        label_width: Width reserved for the label column.
+    """
+    value_width = content_width - label_width - 2  # -2 for spacing
+
+    # Wrap the value text
+    wrapped_lines = _wrap_text(value, max_width=value_width)
+
+    if not wrapped_lines:
+        wrapped_lines = [""]
+
+    # First line includes the label
+    first_line_value = wrapped_lines[0] if wrapped_lines else ""
+    label_styled = styled(label, Colors.DIM)
+    value_styled = styled(first_line_value, value_color)
+
+    # Calculate padding for first line
+    first_line_raw = f"{label:<{label_width}} {first_line_value}"
+    padding = content_width - len(first_line_raw)
+
+    left_border = styled("│", border_color)
+    right_border = styled("│", border_color)
+    print(
+        f"  {left_border}  {label_styled:<{label_width + len(label_styled) - len(label)}} "
+        f"{value_styled}{' ' * max(0, padding)}{right_border}"
+    )
+
+    # Continuation lines (indented to align with value)
+    for line in wrapped_lines[1:]:
+        line_styled = styled(line, value_color)
+        indent = " " * (label_width + 1)
+        line_raw = f"{indent}{line}"
+        padding = content_width - len(line_raw)
+        print(f"  {left_border}  {indent}{line_styled}{' ' * max(0, padding)}{right_border}")
+
+
+def display_question_detail(*, question: Question) -> None:
+    """Display full details of a question before sending.
+
+    Args:
+        question: The question to display.
+    """
+    print("")
+
+    box_width = 60
+    content_width = box_width - 2  # Account for left padding inside box
+
+    # Top border
+    border_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
+    print(f"  {styled('╭' + '─' * box_width + '╮', border_color)}")
+
+    # Title (centered, accounting for emoji width)
+    icon = ICONS["malicious"] if question.is_malicious else ICONS["safe"]
+    title_text = f"{icon} Question {question.id}"
+    # Use display width for centering (emojis are 2 columns wide)
+    title_display_width = _display_width(title_text)
+    title_padding = (content_width - title_display_width) // 2
+    centered_title = " " * title_padding + title_text
+    # Pass the display width for correct right-side padding
+    _print_box_line(
+        text=centered_title,
+        border_color=border_color,
+        content_width=content_width,
+        display_width=title_padding + title_display_width,
+    )
+
+    # Separator
+    print(f"  {styled('├' + '─' * box_width + '┤', border_color)}")
+
+    # Metadata fields with word-wrapping
+    _print_wrapped_field(
+        label="Category:",
+        value=question.category.capitalize(),
+        border_color=border_color,
+        value_color=BRAND_INFO,
+        content_width=content_width,
+    )
+
+    _print_wrapped_field(
+        label="Origin:",
+        value=question.origin,
+        border_color=border_color,
+        value_color=BRAND_INFO,
+        content_width=content_width,
+    )
+
+    type_value = (
+        "Malicious (attempts private access)"
+        if question.is_malicious
+        else "Safe (legitimate question)"
+    )
+    type_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
+    _print_wrapped_field(
+        label="Type:",
+        value=type_value,
+        border_color=border_color,
+        value_color=type_color,
+        content_width=content_width,
+    )
+
+    # Separator
+    print(f"  {styled('├' + '─' * box_width + '┤', border_color)}")
+
+    # Question text (word-wrapped)
+    question_lines = _wrap_text(question.text, max_width=content_width - 2)
+
+    for line in question_lines:
+        _print_box_line(text=line, border_color=border_color, text_color=Colors.WHITE)
 
     # Bottom border
-    print(f"  {styled('╰' + '─' * 60 + '╯', border_color)}")
+    print(f"  {styled('╰' + '─' * box_width + '╯', border_color)}")
 
     # Status message
     print("")
@@ -1270,6 +1526,310 @@ def display_question_detail(*, question: Question) -> None:
     )
     print(f"  {sending_msg}")
     print("")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Model Selection Menu
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class VRAMBreakdown:
+    """Detailed VRAM breakdown by component."""
+
+    model_params_gb: float
+    kv_cache_gb: float
+    activations_gb: float
+    sae_gb: float
+    overhead_gb: float
+    total_gb: float
+
+
+@dataclass
+class ModelOption:
+    """A model configuration option for the selection menu."""
+
+    key: str
+    name: str
+    size: str
+    quantization: str | None
+    description: str
+    vram_estimate: str
+    vram_breakdown: VRAMBreakdown
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VRAM Estimation (based on https://apxml.com/posts/how-to-calculate-vram-requirements-for-an-llm)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Model parameter counts (in billions)
+MODEL_PARAMS: dict[str, float] = {
+    "1b": 1.0,
+    "4b": 4.0,
+    "12b": 12.0,
+    "27b": 27.0,
+}
+
+# Bytes per parameter for each precision
+BYTES_PER_PARAM: dict[str | None, float] = {
+    None: 2.0,  # bf16 (default, no quantization)
+    "bf16": 2.0,
+    "fp16": 2.0,
+    "int8": 1.0,
+    "int4": 0.5,
+}
+
+# Fixed VRAM components (in GB)
+SAE_VRAM_GB: float = 0.5  # SAE with 16k width
+OVERHEAD_FACTOR: float = 0.15  # 15% overhead for framework, CUDA kernels, etc.
+
+
+def estimate_vram_breakdown(
+    *,
+    model_size: str,
+    quantization: str | None = None,
+    context_length: int = 8192,
+    batch_size: int = 1,
+) -> VRAMBreakdown:
+    """Estimate VRAM requirements for inference with detailed breakdown.
+
+    Formula based on: https://apxml.com/posts/how-to-calculate-vram-requirements-for-an-llm
+    Total VRAM ≈ VRAM_params + VRAM_kv_cache + VRAM_activations + VRAM_sae + VRAM_overhead
+
+    Args:
+        model_size: Model size identifier (e.g., "4b", "12b").
+        quantization: Quantization type ("int4", "int8", None for bf16).
+        context_length: Maximum context length for KV cache estimation.
+        batch_size: Batch size for inference.
+
+    Returns:
+        VRAMBreakdown with all components.
+    """
+    # Get parameter count
+    params_billions = MODEL_PARAMS.get(model_size, 4.0)
+    params = params_billions * 1e9
+
+    # Get bytes per parameter
+    bytes_per_param = BYTES_PER_PARAM.get(quantization, 2.0)
+
+    # Model parameters VRAM
+    vram_params_gb = (params * bytes_per_param) / (1024**3)
+
+    # KV Cache estimation (simplified)
+    # For Gemma models: ~32 layers, 8 KV heads, 128 head dim for 4B
+    # KV cache ≈ 2 × layers × kv_heads × head_dim × seq_len × batch × bytes
+    # Using approximate values scaled by model size
+    layers = int(16 * params_billions / 4)  # Scale layers with model size
+    kv_heads = 8
+    head_dim = 128
+    kv_bytes = 2  # KV cache typically in fp16/bf16
+
+    vram_kv_cache = (2 * layers * kv_heads * head_dim * context_length * batch_size * kv_bytes) / (
+        1024**3
+    )
+
+    # Activations estimation (rough approximation)
+    # Activations scale with model size and context
+    hidden_dim = int(2048 * (params_billions / 4) ** 0.5)  # Approximate hidden dim
+    vram_activations_gb = (batch_size * context_length * hidden_dim * layers * 2 * 0.001) / (
+        1024**3
+    )  # Simplified heuristic
+
+    # SAE VRAM (fixed for 16k width)
+    vram_sae_gb = SAE_VRAM_GB
+
+    # Sum base VRAM
+    base_vram = vram_params_gb + vram_kv_cache + vram_activations_gb + vram_sae_gb
+
+    # Calculate overhead
+    overhead_gb = base_vram * OVERHEAD_FACTOR
+
+    # Total VRAM
+    total_vram = base_vram + overhead_gb
+
+    return VRAMBreakdown(
+        model_params_gb=vram_params_gb,
+        kv_cache_gb=vram_kv_cache,
+        activations_gb=vram_activations_gb,
+        sae_gb=vram_sae_gb,
+        overhead_gb=overhead_gb,
+        total_gb=total_vram,
+    )
+
+
+def estimate_vram_gb(
+    *,
+    model_size: str,
+    quantization: str | None = None,
+    context_length: int = 8192,
+    batch_size: int = 1,
+) -> float:
+    """Estimate total VRAM requirements for inference.
+
+    Args:
+        model_size: Model size identifier (e.g., "4b", "12b").
+        quantization: Quantization type ("int4", "int8", None for bf16).
+        context_length: Maximum context length for KV cache estimation.
+        batch_size: Batch size for inference.
+
+    Returns:
+        Estimated total VRAM in gigabytes.
+    """
+    breakdown = estimate_vram_breakdown(
+        model_size=model_size,
+        quantization=quantization,
+        context_length=context_length,
+        batch_size=batch_size,
+    )
+    return breakdown.total_gb
+
+
+def format_vram_estimate(vram_gb: float) -> str:
+    """Format VRAM estimate as a human-readable string.
+
+    Args:
+        vram_gb: VRAM in gigabytes.
+
+    Returns:
+        Formatted string like "~5.2 GB".
+    """
+    return f"~{vram_gb:.1f} GB"
+
+
+def create_model_options() -> list[ModelOption]:
+    """Create model options with computed VRAM estimates.
+
+    Returns:
+        List of ModelOption with dynamically calculated VRAM estimates.
+    """
+    breakdown_4b_bf16 = estimate_vram_breakdown(model_size="4b", quantization=None)
+    breakdown_4b_int4 = estimate_vram_breakdown(model_size="4b", quantization="int4")
+    breakdown_12b_int4 = estimate_vram_breakdown(model_size="12b", quantization="int4")
+
+    return [
+        ModelOption(
+            key="1",
+            name="Gemma 3 4B IT (bf16)",
+            size="4b",
+            quantization=None,
+            description="Full precision, best quality",
+            vram_estimate=format_vram_estimate(breakdown_4b_bf16.total_gb),
+            vram_breakdown=breakdown_4b_bf16,
+        ),
+        ModelOption(
+            key="2",
+            name="Gemma 3 4B IT (int4)",
+            size="4b",
+            quantization="int4",
+            description="4-bit quantized, balanced",
+            vram_estimate=format_vram_estimate(breakdown_4b_int4.total_gb),
+            vram_breakdown=breakdown_4b_int4,
+        ),
+        ModelOption(
+            key="3",
+            name="Gemma 3 12B IT (int4)",
+            size="12b",
+            quantization="int4",
+            description="Larger model, 4-bit quantized",
+            vram_estimate=format_vram_estimate(breakdown_12b_int4.total_gb),
+            vram_breakdown=breakdown_12b_int4,
+        ),
+    ]
+
+
+# Initialize model options with computed VRAM estimates
+MODEL_OPTIONS: list[ModelOption] = create_model_options()
+
+
+def display_model_selection_menu() -> ModelOption:
+    """Display model selection menu and return chosen option.
+
+    Returns:
+        The selected ModelOption.
+    """
+    print("")
+    # Centered header
+    menu_width = 62
+    header_text = f"{ICONS['model']} Select Model Configuration"
+    header = gradient_text(
+        header_text,
+        (138, 180, 248),
+        (186, 104, 200),
+    )
+    # Center the header (account for icon taking ~2 chars)
+    header_padding = (menu_width - len(header_text)) // 2
+    print(f"{' ' * header_padding}{header}")
+    print(f"  {styled('─' * (menu_width - 2), Colors.DIM)}")
+    print("")
+
+    for option in MODEL_OPTIONS:
+        # Key badge
+        key_badge = styled(f" {option.key} ", Colors.BOLD, Colors.BG_BLUE, Colors.WHITE)
+
+        # Model name
+        name_styled = styled(option.name, BRAND_PRIMARY, Colors.BOLD)
+
+        # VRAM estimate
+        vram_styled = styled(f"[{option.vram_estimate}]", BRAND_WARNING)
+
+        # Description
+        desc_styled = styled(option.description, Colors.DIM)
+
+        print(f"  {key_badge}  {name_styled:<30} {vram_styled}")
+        print(f"       {desc_styled}")
+
+        # VRAM breakdown display
+        b = option.vram_breakdown
+        tree_branch = styled("├─", Colors.DIM)
+        tree_end = styled("└─", Colors.DIM)
+        sep = styled("│", Colors.DIM)
+
+        # Line 1: Model params and KV cache
+        params_label = styled("Model:", Colors.DIM)
+        params_val = styled(f"{b.model_params_gb:.1f} GB", BRAND_INFO)
+        kv_label = styled("KV cache:", Colors.DIM)
+        kv_val = styled(f"{b.kv_cache_gb:.1f} GB", BRAND_INFO)
+        print(f"       {tree_branch} {params_label} {params_val}  {sep}  {kv_label} {kv_val}")
+
+        # Line 2: Activations, SAE, and overhead
+        act_label = styled("Activations:", Colors.DIM)
+        act_val = styled(f"{b.activations_gb:.1f} GB", BRAND_INFO)
+        sae_label = styled("SAE:", Colors.DIM)
+        sae_val = styled(f"{b.sae_gb:.1f} GB", BRAND_INFO)
+        overhead_pct = int(OVERHEAD_FACTOR * 100)
+        overhead_text = styled(f"+{overhead_pct}% overhead", Colors.DIM)
+        print(
+            f"       {tree_end} {act_label} {act_val}  {sep}  {sae_label} {sae_val}  {sep}  "
+            f"{overhead_text}"
+        )
+        print("")
+
+    print(f"  {styled('─' * (menu_width - 2), Colors.DIM)}")
+
+    # Prompt for selection
+    prompt_icon = styled(ICONS["select"], BRAND_ACCENT)
+    prompt_text = styled("Enter choice (1-3):", Colors.WHITE)
+
+    while True:
+        try:
+            choice = input(f"  {prompt_icon} {prompt_text} ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("")
+            raise
+
+        # Find matching option
+        for option in MODEL_OPTIONS:
+            if choice == option.key:
+                check = styled(ICONS["check"], BRAND_SUCCESS)
+                selected_msg = styled(f"Selected: {option.name}", BRAND_SUCCESS)
+                print(f"\n  {check} {selected_msg}")
+                print("")
+                return option
+
+        # Invalid choice
+        cross = styled(ICONS["cross"], BRAND_ERROR)
+        err_msg = styled("Invalid choice. Please enter 1, 2, or 3.", BRAND_ERROR)
+        print(f"  {cross} {err_msg}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1566,12 +2126,13 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             trajectory = StreamingTrajectory()
             start_time = time.perf_counter()
             output_tokens = 0
-            final_state = None
+            # Collect all new messages from agent updates during streaming
+            new_messages: list[BaseMessage] = []
 
-            # Use streaming mode for real-time output
+            # Use streaming mode for real-time output (including custom events)
             for stream_mode, chunk in agent.stream(
                 conversation_state,
-                stream_mode=["messages", "updates"],
+                stream_mode=["messages", "updates", "custom"],
             ):
                 if stream_mode == "messages":
                     token, metadata = chunk
@@ -1585,15 +2146,21 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                         trajectory.stream_token(token=str(token.content))
                         output_tokens += 1
 
+                elif stream_mode == "custom":
+                    # Handle custom stream events (e.g., from search_knowledge_base)
+                    if isinstance(chunk, dict) and "event" in chunk:
+                        trajectory.display_search_results(event_data=chunk)
+
                 elif stream_mode == "updates":
                     for source, update in chunk.items():
-                        final_state = update
+                        # Collect messages from each update for conversation history
+                        update_messages = update.get("messages", [])
 
                         # Handle completed messages
                         if source == "model":
-                            messages = update.get("messages", [])
-                            for msg in messages:
+                            for msg in update_messages:
                                 if isinstance(msg, AIMessage):
+                                    new_messages.append(msg)
                                     # Capture final response content
                                     if msg.content and not msg.tool_calls:
                                         trajectory.final_response = str(msg.content)
@@ -1607,9 +2174,9 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                                             )
 
                         elif source == "tools":
-                            messages = update.get("messages", [])
-                            for msg in messages:
+                            for msg in update_messages:
                                 if isinstance(msg, ToolMessage):
+                                    new_messages.append(msg)
                                     content = str(msg.content) if msg.content else ""
                                     trajectory.display_tool_result(
                                         tool_name=msg.name or "tool",
@@ -1642,9 +2209,9 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                 output_tokens=output_tokens,
             )
 
-            # Update conversation state from final result
-            if final_state and "messages" in final_state:
-                conversation_state = {"messages": final_state["messages"]}
+            # Update conversation state by appending all new messages from this turn
+            # We collected AIMessage and ToolMessage instances during streaming
+            conversation_state["messages"].extend(new_messages)
 
         except Exception as e:
             cross = styled(ICONS["cross"], BRAND_ERROR)
@@ -1659,8 +2226,15 @@ def main() -> None:
         print("\033[2J\033[H", end="")  # Clear screen
         display_welcome_banner()
 
-        # Load settings and model
+        # Show model selection menu
+        selected_model = display_model_selection_menu()
+
+        # Load settings and override with selected model configuration
         settings = Settings()  # type: ignore[call-arg]
+        settings.gemma_model_size = selected_model.size  # type: ignore[assignment]
+        settings.gemma_quantization = selected_model.quantization  # type: ignore[assignment]
+
+        # Load model with selected configuration
         model = load_model(settings)
 
         # Start chat

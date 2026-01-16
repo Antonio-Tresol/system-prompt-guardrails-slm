@@ -198,8 +198,11 @@ class GemmaWithSAE(BaseChatModel):
     def _format_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
         """Convert LangChain messages to HuggingFace chat format.
 
-        Handles strict User/Model alternation by merging System messages into User messages.
-        Formats Tool messages as User messages with markdown blocks.
+        Handles strict User/Model alternation required by Gemma's chat template:
+        - Merges System messages into the next User message with XML tags
+        - Formats Tool messages as User messages with XML blocks
+        - Merges consecutive same-role messages to maintain alternation
+        - Uses XML tags to clearly separate different message types when merged
         """
         formatted_messages: List[Dict[str, Any]] = []
         system_buffer = ""
@@ -212,24 +215,54 @@ class GemmaWithSAE(BaseChatModel):
                 continue
 
             elif isinstance(msg, HumanMessage):
-                content = str(msg.content) if msg.content else ""
+                raw_content = str(msg.content) if msg.content else ""
+                # Wrap user message in tags for clarity when merged
+                user_content = f"<user_message>{raw_content}</user_message>"
                 if system_buffer:
-                    content = f"{system_buffer}\n\n{content}"
+                    # Wrap system prompt in tags and combine with user message
+                    content = f"<system_prompt>{system_buffer}</system_prompt>\n\n{user_content}"
                     system_buffer = ""
-                formatted_messages.append({"role": "user", "content": content})
+                else:
+                    content = user_content
+                self._append_or_merge(formatted_messages, role="user", content=content)
 
             elif isinstance(msg, AIMessage):
                 content = self._format_ai_message_content(msg)
-                formatted_messages.append({"role": "model", "content": content})
+                self._append_or_merge(formatted_messages, role="model", content=content)
 
             elif isinstance(msg, ToolMessage):
                 content = self._format_tool_output(msg)
-                formatted_messages.append({"role": "user", "content": content})
+                self._append_or_merge(formatted_messages, role="user", content=content)
 
         if system_buffer:
-            formatted_messages.append({"role": "user", "content": system_buffer})
+            # Standalone system buffer gets wrapped in tags
+            content = f"<system_prompt>{system_buffer}</system_prompt>"
+            self._append_or_merge(formatted_messages, role="user", content=content)
 
         return formatted_messages
+
+    def _append_or_merge(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        role: str,
+        content: str,
+    ) -> None:
+        """Append a message or merge with the previous one if same role.
+
+        Gemma's chat template requires strict user/model alternation.
+        This merges consecutive same-role messages to maintain that constraint.
+
+        Args:
+            messages: The list of formatted messages to modify in-place.
+            role: The role of the new message ("user" or "model").
+            content: The content of the new message.
+        """
+        if messages and messages[-1]["role"] == role:
+            # Merge with previous message of same role
+            messages[-1]["content"] += "\n\n" + content
+        else:
+            messages.append({"role": role, "content": content})
 
     def _format_ai_message_content(self, msg: AIMessage) -> str:
         """Format AIMessage content, including tool calls as markdown blocks."""

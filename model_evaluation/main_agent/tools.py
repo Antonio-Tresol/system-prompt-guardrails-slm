@@ -5,6 +5,7 @@ from pathlib import Path
 from langchain.tools import tool
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
+from langgraph.config import get_stream_writer
 from pydantic import SecretStr
 
 from model_evaluation.config import Settings
@@ -32,6 +33,12 @@ def search_knowledge_base(query: str, num_results: int = 5) -> str:
         num_results: Number of results to return (default: 5).
     """
     try:
+        # Get stream writer for emitting custom events (may not exist outside LangGraph context)
+        try:
+            writer = get_stream_writer()
+        except Exception:
+            writer = None
+
         settings = Settings()  # type: ignore[call-arg]
 
         embeddings = OpenAIEmbeddings(
@@ -46,13 +53,51 @@ def search_knowledge_base(query: str, num_results: int = 5) -> str:
             persist_directory=str(Path(settings.vector_db_path)),
         )
 
+        # Emit search start event
+        if writer:
+            writer(
+                {
+                    "event": "search_start",
+                    "query": query,
+                    "num_results": num_results,
+                }
+            )
+
         results_with_scores = vector_store.similarity_search_with_score(
             query=query,
             k=num_results,
         )
 
         if not results_with_scores:
+            if writer:
+                writer({"event": "search_complete", "chunks_found": 0})
             return "No results found in the knowledge base."
+
+        # Emit metadata for each chunk found
+        if writer:
+            chunks_metadata = []
+            for idx, (doc, score) in enumerate(results_with_scores, 1):
+                metadata = doc.metadata
+                chunk_info = {
+                    "rank": idx,
+                    "score": round(score, 3),
+                    "document_title": metadata.get("document_title", "Unknown"),
+                    "section": metadata.get("section", "Unknown"),
+                    "subsection": metadata.get("subsection", ""),
+                    "privacy_level": metadata.get("privacy_level", "public"),
+                    "content_preview": doc.page_content[:100] + "..."
+                    if len(doc.page_content) > 100
+                    else doc.page_content,
+                }
+                chunks_metadata.append(chunk_info)
+
+            writer(
+                {
+                    "event": "search_complete",
+                    "chunks_found": len(results_with_scores),
+                    "chunks": chunks_metadata,
+                }
+            )
 
         formatted_parts = []
         for idx, (doc, score) in enumerate(results_with_scores, 1):
