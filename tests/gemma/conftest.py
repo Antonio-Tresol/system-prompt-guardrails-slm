@@ -14,7 +14,7 @@ def gemma_model() -> AutoModelForCausalLM:
     return AutoModelForCausalLM.from_pretrained(
         "google/gemma-3-4b-it",
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )  # type: ignore
 
 

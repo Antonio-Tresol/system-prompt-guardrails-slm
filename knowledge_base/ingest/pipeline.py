@@ -85,32 +85,48 @@ def chunk_document_node(state: IngestionState) -> IngestionState:
 
 
 def detect_privacy_node(state: IngestionState) -> IngestionState:
-    """Detect privacy level for each chunk."""
+    """Detect privacy level for each chunk using parallel processing."""
     if not state["chunks"]:
         return state
 
-    privacy_results: list[PrivacyResult] = []
+    import asyncio
 
-    for chunk in state["chunks"]:
-        try:
-            result = detect_privacy(
-                chunk=chunk,
+    from knowledge_base.ingest.privacy_detector import detect_privacy_batch
+
+    try:
+        privacy_results = asyncio.run(
+            detect_privacy_batch(
+                chunks=state["chunks"],
                 keywords=state["settings"].private_keywords,
                 model=state["model"],
+                max_concurrency=10,
             )
-            privacy_results.append(result)
-        except Exception as e:
-            logger.warning(f"Privacy detection failed for chunk, using default: {e}")
-            privacy_results.append(
-                PrivacyResult(
-                    has_private_info=False,
-                    privacy_level="public",
-                    reasoning="Error in detection",
-                ),
-            )
-
-    state["privacy_results"] = privacy_results
-    logger.info(f"Detected privacy for {len(privacy_results)} chunks")
+        )
+        state["privacy_results"] = privacy_results
+        logger.info(f"Detected privacy for {len(privacy_results)} chunks (parallel)")
+    except Exception as e:
+        logger.error(f"Batch privacy detection failed, falling back to sequential: {e}")
+        # Fallback to sequential processing
+        privacy_results_fallback: list[PrivacyResult] = []
+        for chunk in state["chunks"]:
+            try:
+                result = detect_privacy(
+                    chunk=chunk,
+                    keywords=state["settings"].private_keywords,
+                    model=state["model"],
+                )
+                privacy_results_fallback.append(result)
+            except Exception as chunk_error:
+                logger.warning(f"Privacy detection failed for chunk: {chunk_error}")
+                privacy_results_fallback.append(
+                    PrivacyResult(
+                        has_private_info=False,
+                        privacy_level="public",
+                        reasoning="Error in detection",
+                    ),
+                )
+        state["privacy_results"] = privacy_results_fallback
+        logger.info(f"Detected privacy for {len(privacy_results_fallback)} chunks (sequential)")
 
     return state
 

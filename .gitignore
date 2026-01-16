@@ -204,7 +204,12 @@ cython_debug/
 
 # Ruff stuff:
 .ruff_cache/
-data/**
+# Data folder - ignore contents but keep structure
+data/cookbooks/*
+data/papers/*
+data/vector_db/
+!data/cookbooks/.gitkeep
+!data/papers/.gitkeep
 # PyPI configuration file
 .pypirc
 

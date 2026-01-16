@@ -1,3 +1,10 @@
+"""Main entry point for building the knowledge base.
+
+This module orchestrates the ingestion pipeline, handling data preparation,
+document processing, and vector database population.
+"""
+
+import shutil
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -8,6 +15,47 @@ from knowledge_base.utils.file_tracker import FileTracker
 from knowledge_base.vectordb.chroma_store import ChromaStore
 from utils.logging import logger, setup_logging
 
+SYNTHETIC_DATA_SOURCE = Path("data_generation/synthetic_data")
+
+
+def _prepare_data_sources(*, source_dirs: list[Path]) -> None:
+    """Ensure data directories are populated with required files.
+
+    Args:
+        source_dirs: List of source directories from config.
+    """
+    for source_dir in source_dirs:
+        source_dir.mkdir(parents=True, exist_ok=True)
+
+        if "cookbooks" in source_dir.name:
+            existing_mds = list(source_dir.glob("*.md"))
+            if not existing_mds and SYNTHETIC_DATA_SOURCE.exists():
+                source_mds = list(SYNTHETIC_DATA_SOURCE.glob("*.md"))
+                if source_mds:
+                    logger.info(f"Copying {len(source_mds)} cookbooks from {SYNTHETIC_DATA_SOURCE}")
+                    for md_file in source_mds:
+                        shutil.copy2(md_file, source_dir / md_file.name)
+                    logger.info(f"✅ Copied cookbooks to {source_dir}")
+                else:
+                    logger.warning(
+                        f"No cookbooks found in {SYNTHETIC_DATA_SOURCE}. "
+                        "Run 'uv run generate_data' to create them."
+                    )
+
+        elif "papers" in source_dir.name:
+            existing_pdfs = list(source_dir.glob("*.pdf"))
+            if not existing_pdfs:
+                logger.info(f"No papers found in {source_dir}. Downloading papers...")
+                from data_generation.papers.download_papers import (
+                    ARXIV_URLS,
+                    download_all_papers,
+                )
+
+                try:
+                    download_all_papers(ARXIV_URLS, source_dir)
+                except Exception as e:
+                    logger.error(f"Failed to download papers: {e}")
+
 
 def main() -> None:
     """Build and populate vector database."""
@@ -16,24 +64,9 @@ def main() -> None:
 
     logger.info("Starting knowledge base ingestion")
 
-    # Use source directories from settings
-    # settings.paths.source_documents is now a list[str] of absolute paths
     source_dirs = [Path(p) for p in settings.paths.source_documents]
 
-    # Check for papers and download if empty
-    # We dynamically check if any source dir matches 'papers' to trigger download
-    # This keeps the logic somewhat tied to the data structure but configurable path
-    for source_dir in source_dirs:
-        if "papers" in source_dir.name and (
-            not source_dir.exists() or not list(source_dir.glob("*.pdf"))
-        ):
-            logger.info(f"No papers found in {source_dir}. Downloading papers...")
-            from data_generation.papers.download_papers import ARXIV_URLS, download_all_papers
-
-            try:
-                download_all_papers(ARXIV_URLS, source_dir)
-            except Exception as e:
-                logger.error(f"Failed to download papers: {e}")
+    _prepare_data_sources(source_dirs=source_dirs)
 
     file_tracker = FileTracker(settings.paths.file_tracker)
 

@@ -1,8 +1,14 @@
 """Centralized logging configuration using Loguru for the entire project."""
 
+import logging
 import sys
 
 from loguru import logger
+
+# Silence verbose HTTP request logging from OpenAI/LangChain dependencies
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 
 def setup_logging(*, level: str = "INFO", log_file: str | None = None) -> None:

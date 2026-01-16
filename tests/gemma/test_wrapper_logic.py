@@ -89,10 +89,9 @@ class TestGemmaWrapper(unittest.TestCase):
             self.assertIn("sys", conversation[0]["content"])
             self.assertIn("user input", conversation[0]["content"])
 
-            # Check AI with Tool Call
+            # Check AI with Tool Call (new format uses <tool_call>)
             self.assertEqual(conversation[1]["role"], "model")
-            # Content should contain tool code block
-            self.assertIn("```tool_code", conversation[1]["content"])
+            self.assertIn("<tool_call>", conversation[1]["content"])
             self.assertIn("tool1", conversation[1]["content"])
 
             # Check Tool Result

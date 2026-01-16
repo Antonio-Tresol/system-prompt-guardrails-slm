@@ -3,15 +3,27 @@
 This package provides:
 - GemmaWithSAE: LangChain wrapper with SAE feature extraction
 - SAE loading and feature extraction via Gemma Scope 2
+- Gemma model loading utilities with quantization support
 
 Example:
     from model_evaluation.main_agent import (
         GemmaWithSAE,
+        GemmaModelConfig,
+        load_gemma_model,
         load_gemma_scope_sae,
         extract_sae_features,
     )
 """
 
+from model_evaluation.main_agent.gemma_model_loader import (
+    GemmaModelConfig,
+    MemoryTracker,
+    clear_memory,
+    load_gemma_model,
+    memory_efficient_loading,
+    print_memory_usage,
+    print_model_info,
+)
 from model_evaluation.main_agent.gemma_scope_sae import (
     JumpReLUSAE,
     SAEConfig,
@@ -29,6 +41,14 @@ from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
 __all__ = [
     # Wrapper
     "GemmaWithSAE",
+    # Model loading
+    "GemmaModelConfig",
+    "MemoryTracker",
+    "clear_memory",
+    "load_gemma_model",
+    "memory_efficient_loading",
+    "print_memory_usage",
+    "print_model_info",
     # SAE extraction
     "JumpReLUSAE",
     "SAEConfig",

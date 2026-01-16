@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str
     openrouter_base_url: str
+    langfuse_secret_key: str = ""
+    langfuse_public_key: str = ""
+    langfuse_base_url: str = ""
 
     paths: PathsConfig
     embeddings: EmbeddingsConfig

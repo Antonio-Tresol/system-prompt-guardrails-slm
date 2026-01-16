@@ -46,7 +46,7 @@ print(f"Loading {MODEL_ID}...")
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
 )
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 print(f"✓ Model loaded on: {next(model.parameters()).device}")

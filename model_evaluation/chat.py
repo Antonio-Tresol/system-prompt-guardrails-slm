@@ -1,0 +1,1684 @@
+"""Terminal-based chat interface for testing the Safety Agent.
+
+A Claude Code-inspired terminal UI with stunning visuals, streaming,
+real-time trajectory visualization, and modern design for mechanistic
+interpretability testing.
+
+Usage:
+    uv run python -m model_evaluation.chat
+
+Commands:
+    /quit, /exit, /q - Exit the chat
+    /clear - Clear conversation history
+    /activations - Show SAE activation analysis
+    /markdown - Switch to Markdown system prompt
+    /plain - Switch to Plain Text system prompt
+    /memory - Show GPU memory stats
+    /stats - Show session statistics
+    /help - Show available commands
+    /qs, /questions - Browse test questions
+    /ask <id> - Send a specific question (e.g., /ask p15, /ask s7m)
+    /random - Send a random question
+"""
+
+import csv
+import itertools
+import random
+import re
+import sys
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import torch
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
+
+from model_evaluation.config import Settings
+from model_evaluation.main_agent.gemma_model_loader import (
+    GemmaModelConfig,
+    MemoryTracker,
+    load_gemma_model,
+)
+from model_evaluation.main_agent.gemma_scope_sae import load_gemma_scope_sae
+from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
+from model_evaluation.main_agent.rag_agent import (
+    MARKDOWN_SYSTEM_PROMPT,
+    PLAIN_SYSTEM_PROMPT,
+    create_safety_agent_with_tracing,
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Terminal & ANSI Utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def clear_line() -> None:
+    """Clear the current terminal line."""
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+
+
+def hide_cursor() -> None:
+    """Hide the terminal cursor."""
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+
+
+def show_cursor() -> None:
+    """Show the terminal cursor."""
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Color System - Modern Gradient Palette
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class Colors:
+    """ANSI color codes with 256-color and RGB support."""
+
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    ITALIC = "\033[3m"
+
+    # Standard colors
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+
+    # Bright variants
+    BRIGHT_GREEN = "\033[92m"
+    BRIGHT_YELLOW = "\033[93m"
+    BRIGHT_BLUE = "\033[94m"
+    BRIGHT_MAGENTA = "\033[95m"
+    BRIGHT_CYAN = "\033[96m"
+
+    # Background colors
+    BG_BLUE = "\033[44m"
+    BG_MAGENTA = "\033[45m"
+
+    @staticmethod
+    def rgb(r: int, g: int, b: int) -> str:
+        """Create RGB foreground color."""
+        return f"\033[38;2;{r};{g};{b}m"
+
+
+# Brand colors for consistent styling
+BRAND_PRIMARY = Colors.rgb(138, 180, 248)  # Soft blue
+BRAND_SECONDARY = Colors.rgb(129, 212, 250)  # Cyan
+BRAND_ACCENT = Colors.rgb(186, 104, 200)  # Purple
+BRAND_SUCCESS = Colors.rgb(129, 199, 132)  # Green
+BRAND_WARNING = Colors.rgb(255, 183, 77)  # Orange
+BRAND_ERROR = Colors.rgb(239, 83, 80)  # Red
+BRAND_INFO = Colors.rgb(100, 181, 246)  # Light blue
+BRAND_MUTED = Colors.rgb(158, 158, 158)  # Gray
+
+
+def styled(text: str, *styles: str) -> str:
+    """Apply ANSI styles to text."""
+    return "".join(styles) + text + Colors.RESET
+
+
+def gradient_text(
+    text: str,
+    start_rgb: tuple[int, int, int],
+    end_rgb: tuple[int, int, int],
+) -> str:
+    """Apply a gradient effect to text."""
+    if not text:
+        return text
+
+    result = []
+    length = len(text)
+
+    for i, char in enumerate(text):
+        if char == " ":
+            result.append(char)
+            continue
+
+        ratio = i / max(length - 1, 1)
+        r = int(start_rgb[0] + (end_rgb[0] - start_rgb[0]) * ratio)
+        g = int(start_rgb[1] + (end_rgb[1] - start_rgb[1]) * ratio)
+        b = int(start_rgb[2] + (end_rgb[2] - start_rgb[2]) * ratio)
+        result.append(f"{Colors.rgb(r, g, b)}{char}")
+
+    return "".join(result) + Colors.RESET
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Visual Components
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Progress bar characters
+PROGRESS_FULL = "█"
+PROGRESS_EMPTY = "░"
+
+# Spinner frames
+SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+# Icons
+ICONS = {
+    "check": "✓",
+    "cross": "✗",
+    "warning": "⚠",
+    "lightning": "⚡",
+    "brain": "🧠",
+    "chart": "📊",
+    "clock": "⏱",
+    "sparkles": "✨",
+    "robot": "🤖",
+    "tools": "🔧",
+    "cube": "📦",
+    "terminal": "💻",
+    "wave": "👋",
+    "thought": "💭",
+    "speech": "💬",
+    "input": "📥",
+    "output": "📤",
+    "refresh": "🔄",
+    "target": "🎯",
+    "gpu": "🎮",
+    "safe": "🟢",
+    "malicious": "🔴",
+    "question": "❓",
+    "list": "📋",
+    "dice": "🎲",
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Animated Spinner Class
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class Spinner:
+    """Animated spinner for async operations."""
+
+    def __init__(
+        self,
+        *,
+        message: str = "Loading",
+        color: str = BRAND_PRIMARY,
+    ) -> None:
+        """Initialize spinner.
+
+        Args:
+            message: Text to display alongside spinner.
+            color: ANSI color code for spinner.
+        """
+        self.message = message
+        self.frames = SPINNER_FRAMES
+        self.color = color
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.elapsed_time = 0.0
+
+    def _animate(self) -> None:
+        """Animation loop running in background thread."""
+        start_time = time.time()
+        for frame in itertools.cycle(self.frames):
+            if self._stop_event.is_set():
+                break
+            self.elapsed_time = time.time() - start_time
+            elapsed_str = f"{self.elapsed_time:.1f}s"
+            spinner_char = styled(frame, self.color, Colors.BOLD)
+            message_styled = styled(self.message, BRAND_MUTED)
+            time_styled = styled(elapsed_str, Colors.DIM)
+            sys.stdout.write(f"\r  {spinner_char} {message_styled} {time_styled}   ")
+            sys.stdout.flush()
+            time.sleep(0.08)
+
+    def start(self) -> "Spinner":
+        """Start the spinner animation."""
+        hide_cursor()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self, *, success: bool = True, message: str | None = None) -> None:
+        """Stop the spinner and show final status."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        show_cursor()
+        clear_line()
+
+        final_message = message or self.message
+        elapsed_str = f"({self.elapsed_time:.1f}s)"
+
+        if success:
+            icon = styled(ICONS["check"], BRAND_SUCCESS, Colors.BOLD)
+            msg = styled(final_message, BRAND_SUCCESS)
+        else:
+            icon = styled(ICONS["cross"], BRAND_ERROR, Colors.BOLD)
+            msg = styled(final_message, BRAND_ERROR)
+
+        time_styled = styled(elapsed_str, Colors.DIM)
+        print(f"  {icon} {msg} {time_styled}")
+
+    def __enter__(self) -> "Spinner":
+        """Context manager entry."""
+        return self.start()
+
+    def __exit__(self, *args: object) -> None:
+        """Context manager exit."""
+        exc_type = args[0] if args else None
+        self.stop(success=exc_type is None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Visual Helper Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def create_section_header(*, title: str, icon: str = "◆") -> str:
+    """Create a section header with icon."""
+    icon_styled = styled(icon, BRAND_ACCENT, Colors.BOLD)
+    title_styled = styled(title, Colors.BOLD, Colors.WHITE)
+    line = styled("─" * 50, Colors.DIM)
+    return f"\n{icon_styled} {title_styled}\n{line}"
+
+
+def create_stat_line(
+    *,
+    label: str,
+    value: str,
+    color: str = Colors.WHITE,
+    icon: str | None = None,
+) -> str:
+    """Create a formatted statistics line."""
+    bullet = styled("•", Colors.DIM)
+    label_styled = styled(f"{label}:", Colors.DIM)
+    value_styled = styled(value, color, Colors.BOLD)
+    if icon:
+        return f"  {icon} {label_styled} {value_styled}"
+    return f"  {bullet} {label_styled} {value_styled}"
+
+
+def create_progress_bar(
+    *,
+    value: float,
+    max_value: float = 100,
+    width: int = 40,
+    show_percentage: bool = True,
+    color_thresholds: dict[float, str] | None = None,
+) -> str:
+    """Create a progress bar with optional color coding."""
+    percentage = (value / max_value * 100) if max_value > 0 else 0
+    filled = int(width * percentage / 100)
+    empty = width - filled
+
+    # Determine color based on thresholds
+    default_thresholds = {70: BRAND_SUCCESS, 85: BRAND_WARNING, 100: BRAND_ERROR}
+    thresholds = color_thresholds or default_thresholds
+    bar_color = BRAND_SUCCESS
+    for threshold, color in sorted(thresholds.items()):
+        if percentage <= threshold:
+            bar_color = color
+            break
+        bar_color = color
+
+    bar = PROGRESS_FULL * filled + PROGRESS_EMPTY * empty
+    bar_styled = styled(bar, bar_color)
+    brackets = styled("[", Colors.DIM), styled("]", Colors.DIM)
+
+    if show_percentage:
+        pct = styled(f"{percentage:5.1f}%", bar_color)
+        return f"{brackets[0]}{bar_styled}{brackets[1]} {pct}"
+    return f"{brackets[0]}{bar_styled}{brackets[1]}"
+
+
+def create_mini_chart(*, values: list[float], width: int = 20) -> str:
+    """Create a sparkline chart from values."""
+    if not values:
+        return styled("─" * width, Colors.DIM)
+
+    blocks = " ▁▂▃▄▅▆▇█"
+    min_val = min(values)
+    max_val = max(values)
+    val_range = max_val - min_val or 1
+
+    chart = ""
+    for val in values[-width:]:
+        normalized = (val - min_val) / val_range
+        idx = int(normalized * (len(blocks) - 1))
+        chart += blocks[idx]
+
+    return styled(chart, BRAND_INFO)
+
+
+def create_header(
+    *,
+    title: str,
+    subtitle: str | None = None,
+    width: int = 70,
+) -> str:
+    """Create a fancy header with gradient."""
+    lines = []
+    lines.append("")
+
+    # ASCII art style header
+    border = styled("═" * width, BRAND_PRIMARY)
+    lines.append(border)
+
+    # Title with gradient
+    title_gradient = gradient_text(title.upper(), (138, 180, 248), (186, 104, 200))
+    padding = (width - len(title)) // 2
+    lines.append(" " * padding + title_gradient)
+
+    if subtitle:
+        sub_styled = styled(subtitle, Colors.DIM, Colors.ITALIC)
+        sub_padding = (width - len(subtitle)) // 2
+        lines.append(" " * sub_padding + sub_styled)
+
+    lines.append(border)
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Session Statistics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class SessionStats:
+    """Track statistics for the chat session."""
+
+    total_turns: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tool_calls: int = 0
+    total_latency_ms: float = 0.0
+    prompt_style: str = "Markdown"
+    system_prompt_tokens: int = 0
+    agent_steps_history: list[int] = field(default_factory=list)
+    latency_history: list[float] = field(default_factory=list)
+    tokens_history: list[tuple[int, int]] = field(default_factory=list)
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average latency per turn."""
+        if self.total_turns > 0:
+            return self.total_latency_ms / self.total_turns
+        return 0.0
+
+    @property
+    def avg_steps(self) -> float:
+        """Average agent steps per turn."""
+        if not self.agent_steps_history:
+            return 0.0
+        return sum(self.agent_steps_history) / len(self.agent_steps_history)
+
+    @property
+    def tokens_per_second(self) -> float:
+        """Calculate tokens generated per second."""
+        if self.total_latency_ms == 0:
+            return 0.0
+        return self.total_output_tokens / (self.total_latency_ms / 1000)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Display Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def get_memory_stats() -> dict[str, float]:
+    """Get current GPU memory statistics."""
+    if not torch.cuda.is_available():
+        return {"allocated": 0, "reserved": 0, "peak": 0, "free": 0, "total": 0}
+
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    peak = torch.cuda.max_memory_allocated() / 1024**3
+    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    free = total - allocated
+
+    return {
+        "allocated": allocated,
+        "reserved": reserved,
+        "peak": peak,
+        "free": free,
+        "total": total,
+    }
+
+
+def display_memory_stats() -> None:
+    """Display GPU memory statistics with visual flair."""
+    stats = get_memory_stats()
+
+    print(create_section_header(title="GPU Memory", icon=ICONS["gpu"]))
+
+    if stats["total"] == 0:
+        print(styled("  No GPU available", BRAND_WARNING))
+        return
+
+    print(
+        create_stat_line(
+            label="Allocated",
+            value=f"{stats['allocated']:.2f} GB",
+            color=BRAND_SUCCESS,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Reserved",
+            value=f"{stats['reserved']:.2f} GB",
+            color=BRAND_WARNING,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Peak",
+            value=f"{stats['peak']:.2f} GB",
+            color=BRAND_ACCENT,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Free",
+            value=f"{stats['free']:.2f} GB",
+            color=BRAND_INFO,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Total",
+            value=f"{stats['total']:.2f} GB",
+            color=Colors.WHITE,
+        )
+    )
+
+    # Visual memory bar
+    usage_pct = (stats["allocated"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+    bar = create_progress_bar(value=usage_pct, width=45)
+    print(f"\n  {bar}")
+
+
+def display_session_stats(stats: SessionStats) -> None:
+    """Display comprehensive session statistics."""
+    print(create_section_header(title="Session Statistics", icon=ICONS["chart"]))
+
+    # Prompt info
+    print(
+        create_stat_line(
+            label="Prompt Style",
+            value=stats.prompt_style,
+            color=BRAND_PRIMARY,
+        )
+    )
+    print(
+        create_stat_line(
+            label="System Tokens",
+            value=f"{stats.system_prompt_tokens:,}",
+            color=Colors.WHITE,
+        )
+    )
+
+    # Conversation stats
+    print(
+        create_stat_line(
+            label="Total Turns",
+            value=str(stats.total_turns),
+            color=BRAND_SUCCESS,
+            icon=ICONS["speech"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Input Tokens",
+            value=f"{stats.total_input_tokens:,}",
+            color=BRAND_WARNING,
+            icon=ICONS["input"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Output Tokens",
+            value=f"{stats.total_output_tokens:,}",
+            color=BRAND_ACCENT,
+            icon=ICONS["output"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Tool Calls",
+            value=str(stats.total_tool_calls),
+            color=BRAND_INFO,
+            icon=ICONS["tools"],
+        )
+    )
+
+    # Performance stats
+    print(
+        create_stat_line(
+            label="Avg Latency",
+            value=f"{stats.avg_latency_ms:.0f} ms",
+            color=Colors.WHITE,
+            icon=ICONS["clock"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Tokens/sec",
+            value=f"{stats.tokens_per_second:.1f}",
+            color=BRAND_SUCCESS,
+            icon=ICONS["lightning"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Avg Steps",
+            value=f"{stats.avg_steps:.1f}",
+            color=BRAND_PRIMARY,
+            icon=ICONS["refresh"],
+        )
+    )
+
+    # Latency sparkline if we have history
+    if stats.latency_history:
+        chart = create_mini_chart(values=stats.latency_history, width=30)
+        print(f"\n  {styled('Latency trend:', Colors.DIM)} {chart}")
+
+
+def display_activation_summary(model: GemmaWithSAE) -> None:
+    """Display detailed SAE activation analysis with visual enhancements."""
+    activations = model.last_activations
+
+    if activations is None:
+        warn_icon = styled(ICONS["warning"], BRAND_WARNING)
+        warn_msg = styled("No activations recorded yet.", BRAND_WARNING)
+        print(f"\n  {warn_icon} {warn_msg}")
+        return
+
+    print(create_section_header(title="SAE Activation Analysis", icon=ICONS["brain"]))
+
+    # Token breakdown
+    answer_tokens = len(activations.tokens) - activations.prompt_len
+    print(
+        create_stat_line(
+            label="Total Tokens",
+            value=str(len(activations.tokens)),
+            color=Colors.WHITE,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Prompt Tokens",
+            value=str(activations.prompt_len),
+            color=BRAND_WARNING,
+        )
+    )
+    print(
+        create_stat_line(
+            label="Answer Tokens",
+            value=str(answer_tokens),
+            color=BRAND_SUCCESS,
+        )
+    )
+
+    # SAE Metrics with visual indicators
+    print(create_section_header(title="SAE Metrics", icon="📐"))
+
+    # L0 metric with color coding
+    if activations.l0 < 80:
+        l0_color = BRAND_SUCCESS
+    elif activations.l0 < 120:
+        l0_color = BRAND_WARNING
+    else:
+        l0_color = BRAND_ERROR
+
+    l0_thresholds = {40: BRAND_SUCCESS, 60: BRAND_INFO, 80: BRAND_WARNING, 100: BRAND_ERROR}
+    l0_bar = create_progress_bar(
+        value=activations.l0,
+        max_value=200,
+        width=25,
+        show_percentage=False,
+        color_thresholds=l0_thresholds,
+    )
+    l0_label = styled("L0:", Colors.DIM)
+    l0_val = styled(f"{activations.l0:.1f}", l0_color, Colors.BOLD)
+    print(f"  {l0_label} {l0_val} features/token {l0_bar}")
+
+    # FVU metric
+    if activations.fvu < 0.05:
+        fvu_color = BRAND_SUCCESS
+    elif activations.fvu < 0.1:
+        fvu_color = BRAND_WARNING
+    else:
+        fvu_color = BRAND_ERROR
+
+    fvu_thresholds = {5: BRAND_SUCCESS, 10: BRAND_WARNING, 20: BRAND_ERROR}
+    fvu_bar = create_progress_bar(
+        value=activations.fvu * 100,
+        max_value=20,
+        width=25,
+        show_percentage=False,
+        color_thresholds=fvu_thresholds,
+    )
+    fvu_label = styled("FVU:", Colors.DIM)
+    fvu_val = styled(f"{activations.fvu:.2%}", fvu_color, Colors.BOLD)
+    print(f"  {fvu_label} {fvu_val} reconstruction {fvu_bar}")
+
+    # Top features at decision point
+    print(create_section_header(title="Top Features @ Decision Point", icon=ICONS["target"]))
+
+    last_idx = len(activations.tokens) - 1
+    top_feats = activations.top_features[last_idx].tolist()[:10]
+    top_acts = activations.top_activations[last_idx].tolist()[:10]
+
+    max_act = max(top_acts) if top_acts else 1.0
+
+    # Create a nice table-like display
+    rank_colors = [BRAND_ACCENT, BRAND_PRIMARY, BRAND_INFO]
+    for i, (feat, act) in enumerate(zip(top_feats, top_acts, strict=True)):
+        rank_color = rank_colors[i] if i < 3 else Colors.WHITE
+        rank = styled(f"#{i + 1:<2}", rank_color, Colors.BOLD)
+
+        feat_str = styled(f"{feat:>6}", BRAND_ACCENT)
+        act_normalized = act / max_act
+        bar_width = 20
+        filled = int(bar_width * act_normalized)
+        bar = PROGRESS_FULL * filled + PROGRESS_EMPTY * (bar_width - filled)
+        bar_color = BRAND_SUCCESS if act_normalized > 0.5 else BRAND_INFO
+        bar_styled = styled(bar, bar_color)
+
+        act_str = styled(f"{act:.4f}", Colors.WHITE)
+        print(f"  {rank} Feature {feat_str} {bar_styled} {act_str}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Streaming Trajectory Visualization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class StreamingTrajectory:
+    """Manages real-time visualization of agent trajectory during streaming."""
+
+    def __init__(self) -> None:
+        """Initialize trajectory tracker."""
+        self.current_node: str | None = None
+        self.tool_calls_made: list[str] = []
+        self.agent_steps = 0
+        self.streamed_tokens = 0
+        self.start_time = time.time()
+        self._response_started = False
+        self.final_response: str | None = None
+
+    def display_node_change(self, *, node_name: str) -> None:
+        """Display when agent transitions to a new node."""
+        if node_name == self.current_node:
+            return
+
+        self.current_node = node_name
+
+        if node_name == "model":
+            self.agent_steps += 1
+            step_badge = styled(
+                f" Step {self.agent_steps} ",
+                Colors.BG_BLUE,
+                Colors.WHITE,
+            )
+            thinking_icon = styled(ICONS["thought"], BRAND_ACCENT)
+            print(f"\n  {step_badge} {thinking_icon} Model thinking...")
+        elif node_name == "tools":
+            tools_icon = styled(ICONS["tools"], BRAND_INFO)
+            exec_msg = styled("Executing tools...", BRAND_INFO)
+            print(f"\n  {tools_icon} {exec_msg}")
+
+    def display_tool_call(self, *, tool_name: str, tool_args: dict) -> None:
+        """Display a tool call being made."""
+        self.tool_calls_made.append(tool_name)
+        tool_styled = styled(tool_name, BRAND_PRIMARY, Colors.BOLD)
+        args_str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items())
+        args_styled = styled(f"({args_str})", Colors.DIM)
+        arrow = styled("→", BRAND_INFO)
+        print(f"    {arrow} {tool_styled}{args_styled}")
+
+    def display_tool_result(self, *, tool_name: str, result: str) -> None:
+        """Display tool execution result."""
+        check = styled(ICONS["check"], BRAND_SUCCESS)
+        name_styled = styled(tool_name, BRAND_SUCCESS)
+        # Truncate long results
+        result_display = result[:100] + "..." if len(result) > 100 else result
+        result_styled = styled(result_display, Colors.DIM)
+        print(f"    {check} {name_styled}: {result_styled}")
+
+    def start_response_stream(self) -> None:
+        """Initialize response streaming display."""
+        if not self._response_started:
+            self._response_started = True
+            robot = styled(ICONS["robot"], BRAND_SUCCESS)
+            agent_label = styled("Agent", BRAND_SUCCESS, Colors.BOLD)
+            print(f"\n  {robot} {agent_label}:")
+            print("")
+            sys.stdout.write("    ")
+
+    def stream_token(self, *, token: str) -> None:
+        """Stream a single token to output."""
+        self.start_response_stream()
+        self.streamed_tokens += 1
+
+        # Handle newlines with proper indentation
+        if "\n" in token:
+            token = token.replace("\n", "\n    ")
+
+        sys.stdout.write(token)
+        sys.stdout.flush()
+
+    def finish_response(self) -> None:
+        """Finish the streaming response display."""
+        if self._response_started:
+            print()  # Final newline
+
+    def display_final_response(self, *, response: str) -> None:
+        """Display the final response if streaming didn't show it."""
+        if self._response_started:
+            # Already streamed, don't duplicate
+            return
+
+        self.final_response = response
+
+        if not response or not response.strip():
+            warn_icon = styled(ICONS["warning"], BRAND_WARNING)
+            warn_msg = styled("No response generated.", BRAND_WARNING)
+            print(f"\n  {warn_icon} {warn_msg}")
+            return
+
+        # Display response with nice formatting
+        robot = styled(ICONS["robot"], BRAND_SUCCESS)
+        agent_label = styled("Agent", BRAND_SUCCESS, Colors.BOLD)
+        print(f"\n  {robot} {agent_label}:")
+        print("")
+
+        # Indent response text
+        for line in response.split("\n"):
+            print(f"    {line}")
+
+    def display_summary(
+        self,
+        *,
+        latency_ms: float,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        """Display turn summary after completion."""
+        border_color = BRAND_MUTED
+
+        # Determine latency color
+        if latency_ms < 2000:
+            latency_color = BRAND_SUCCESS
+        elif latency_ms < 5000:
+            latency_color = BRAND_WARNING
+        else:
+            latency_color = BRAND_ERROR
+
+        print("")
+        print(f"  {styled('╭' + '─' * 55, border_color)}")
+
+        # Latency
+        clock = ICONS["clock"]
+        latency_val = styled(f"{latency_ms:,.0f}ms", latency_color, Colors.BOLD)
+        tps = output_tokens / (latency_ms / 1000) if latency_ms > 0 else 0
+        tps_styled = styled(f"({tps:.1f} tok/s)", Colors.DIM)
+        print(f"  {styled('│', border_color)} {clock} {latency_val} {tps_styled}")
+
+        # Tokens
+        in_icon = ICONS["input"]
+        out_icon = ICONS["output"]
+        in_tokens_styled = styled(f"{input_tokens:,}", BRAND_WARNING)
+        out_tokens_styled = styled(f"{output_tokens:,}", BRAND_SUCCESS)
+        border = styled("│", border_color)
+        print(f"  {border} {in_icon} {in_tokens_styled} → {out_icon} {out_tokens_styled} tokens")
+
+        # Steps
+        steps_icon = ICONS["refresh"]
+        steps_val = styled(str(self.agent_steps), BRAND_ACCENT, Colors.BOLD)
+        print(f"  {styled('│', border_color)} {steps_icon} {steps_val} agent steps")
+
+        # Tool calls
+        if self.tool_calls_made:
+            tools_icon = ICONS["tools"]
+            tools_str = styled(", ".join(self.tool_calls_made), BRAND_INFO)
+            print(f"  {styled('│', border_color)} {tools_icon} {tools_str}")
+
+        print(f"  {styled('╰' + '─' * 55, border_color)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Welcome Banner & Help
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def display_welcome_banner() -> None:
+    """Display the welcome banner with ASCII art."""
+    # Each line has consistent indentation for proper display
+    banner_lines = [
+        "    ███████╗ █████╗ ███████╗███████╗████████╗██╗   ██╗",
+        "    ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝╚██╗ ██╔╝",
+        "    ███████╗███████║█████╗  █████╗     ██║    ╚████╔╝ ",
+        "    ╚════██║██╔══██║██╔══╝  ██╔══╝     ██║     ╚██╔╝  ",
+        "    ███████║██║  ██║██║     ███████╗   ██║      ██║   ",
+        "    ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝   ╚═╝      ╚═╝   ",
+        "     █████╗  ██████╗ ███████╗███╗   ██╗████████╗      ",
+        "    ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝      ",
+        "    ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║         ",
+        "    ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║         ",
+        "    ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║         ",
+        "    ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝         ",
+    ]
+
+    # Print with gradient effect line by line
+    lines = banner_lines
+    start_color = (138, 180, 248)  # Blue
+    end_color = (186, 104, 200)  # Purple
+
+    for i, line in enumerate(lines):
+        ratio = i / max(len(lines) - 1, 1)
+        r = int(start_color[0] + (end_color[0] - start_color[0]) * ratio)
+        g = int(start_color[1] + (end_color[1] - start_color[1]) * ratio)
+        b = int(start_color[2] + (end_color[2] - start_color[2]) * ratio)
+        print(styled(line, Colors.rgb(r, g, b)))
+        time.sleep(0.02)  # Subtle animation delay
+
+    # Subtitle
+    subtitle = "Mechanistic Interpretability Testing Interface"
+    print("")
+    print(styled(" " * 8 + subtitle, Colors.DIM, Colors.ITALIC))
+    print(styled(" " * 12 + "with SAE Analysis & Langfuse Tracing", Colors.DIM))
+    print("")
+
+
+def display_commands_help() -> None:
+    """Display available commands in a styled format."""
+    commands = [
+        ("/quit", "Exit the chat", "q"),
+        ("/clear", "Clear conversation history", None),
+        ("/activations", "Show SAE activation analysis", None),
+        ("/markdown", "Switch to Markdown prompt", None),
+        ("/plain", "Switch to Plain Text prompt", None),
+        ("/memory", "Show GPU memory stats", None),
+        ("/stats", "Show session statistics", None),
+        ("/help", "Show this help message", None),
+    ]
+
+    question_commands = [
+        ("/qs", "Browse test questions", "questions"),
+        ("/qs papers", "Filter to papers questions", None),
+        ("/qs synthetic", "Filter to synthetic questions", None),
+        ("/qs malicious", "Filter to malicious questions", None),
+        ("/qs safe", "Filter to safe questions", None),
+        ("/ask <id>", "Send question (e.g., /ask p15, /ask s7m)", None),
+        ("/random", "Send a random question", None),
+        ("/random malicious", "Send a random malicious question", None),
+    ]
+
+    print(create_section_header(title="Available Commands", icon=ICONS["terminal"]))
+
+    for cmd, desc, alias in commands:
+        cmd_styled = styled(cmd, BRAND_PRIMARY, Colors.BOLD)
+        desc_styled = styled(desc, Colors.WHITE)
+        if alias:
+            alias_styled = styled(f"(/{alias})", Colors.DIM)
+            print(f"  {cmd_styled:<25} {desc_styled} {alias_styled}")
+        else:
+            print(f"  {cmd_styled:<25} {desc_styled}")
+
+    print("")
+    print(create_section_header(title="Question Testing", icon=ICONS["question"]))
+
+    for cmd, desc, alias in question_commands:
+        cmd_styled = styled(cmd, BRAND_ACCENT, Colors.BOLD)
+        desc_styled = styled(desc, Colors.WHITE)
+        if alias:
+            alias_styled = styled(f"(/{alias})", Colors.DIM)
+            print(f"  {cmd_styled:<25} {desc_styled} {alias_styled}")
+        else:
+            print(f"  {cmd_styled:<25} {desc_styled}")
+
+    print("")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Question Bank for Testing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class Question:
+    """A single test question from the question bank."""
+
+    number: int
+    text: str
+    origin: str
+    is_malicious: bool
+    category: str  # "papers" or "synthetic"
+
+    @property
+    def id(self) -> str:
+        """Generate unique ID like 'p15' or 's7m'."""
+        prefix = "p" if self.category == "papers" else "s"
+        suffix = "m" if self.is_malicious else ""
+        return f"{prefix}{self.number}{suffix}"
+
+
+class QuestionBank:
+    """Loads and manages test questions from CSV files."""
+
+    def __init__(self, *, questions_dir: Path) -> None:
+        """Initialize the question bank.
+
+        Args:
+            questions_dir: Path to the directory containing question CSV files.
+        """
+        self.questions: list[Question] = []
+        self._load_questions(questions_dir=questions_dir)
+
+    def _load_questions(self, *, questions_dir: Path) -> None:
+        """Load questions from CSV files.
+
+        Args:
+            questions_dir: Path to the directory containing question CSV files.
+        """
+        csv_files = [
+            ("papers_questions.csv", "papers"),
+            ("synthetic_questions.csv", "synthetic"),
+        ]
+
+        for filename, category in csv_files:
+            filepath = questions_dir / filename
+            if not filepath.exists():
+                continue
+
+            with open(filepath, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    question = Question(
+                        number=int(row["Number"]),
+                        text=row["Question"].strip(),
+                        origin=row["Document of origin"].strip(),
+                        is_malicious=row["Malicious question"].strip().lower() == "yes",
+                        category=category,
+                    )
+                    self.questions.append(question)
+
+    def filter(
+        self,
+        *,
+        category: str | None = None,
+        malicious: bool | None = None,
+    ) -> list[Question]:
+        """Filter questions by criteria.
+
+        Args:
+            category: Filter by category ("papers" or "synthetic"), or None for all.
+            malicious: Filter by malicious status, or None for all.
+
+        Returns:
+            List of questions matching the criteria.
+        """
+        result = self.questions
+
+        if category is not None:
+            result = [q for q in result if q.category == category]
+
+        if malicious is not None:
+            result = [q for q in result if q.is_malicious == malicious]
+
+        return result
+
+    def get_by_id(self, *, question_id: str) -> Question | None:
+        """Get a question by its unique ID.
+
+        Args:
+            question_id: Question ID like 'p15', 's7m', 'p1m', etc.
+
+        Returns:
+            The matching question, or None if not found.
+        """
+        # Parse ID format: prefix (p/s) + number + optional 'm' suffix
+        match = re.match(r"^([ps])(\d+)(m?)$", question_id.lower())
+        if not match:
+            return None
+
+        prefix, number_str, suffix = match.groups()
+        category = "papers" if prefix == "p" else "synthetic"
+        number = int(number_str)
+        is_malicious = suffix == "m"
+
+        for q in self.questions:
+            if q.category == category and q.number == number and q.is_malicious == is_malicious:
+                return q
+
+        return None
+
+    def random(
+        self,
+        *,
+        category: str | None = None,
+        malicious: bool | None = None,
+    ) -> Question | None:
+        """Get a random question matching criteria.
+
+        Args:
+            category: Filter by category, or None for all.
+            malicious: Filter by malicious status, or None for all.
+
+        Returns:
+            A random question matching criteria, or None if no matches.
+        """
+        filtered = self.filter(category=category, malicious=malicious)
+        if not filtered:
+            return None
+        return random.choice(filtered)  # noqa: S311
+
+
+@dataclass
+class QuestionBrowserState:
+    """State for the question browser pagination and filters."""
+
+    page: int = 1
+    page_size: int = 10
+    category: str | None = None
+    malicious: bool | None = None
+
+
+def display_questions_browser(
+    *,
+    questions: list[Question],
+    state: QuestionBrowserState,
+) -> None:
+    """Display a paginated question browser.
+
+    Args:
+        questions: List of questions to display.
+        state: Current browser state with pagination and filters.
+    """
+    total = len(questions)
+    total_pages = max(1, (total + state.page_size - 1) // state.page_size)
+    state.page = max(1, min(state.page, total_pages))
+
+    start_idx = (state.page - 1) * state.page_size
+    end_idx = min(start_idx + state.page_size, total)
+    page_questions = questions[start_idx:end_idx]
+
+    # Build filter description
+    filters = []
+    if state.category:
+        filters.append(state.category)
+    else:
+        filters.append("all")
+    if state.malicious is True:
+        filters.append("malicious")
+    elif state.malicious is False:
+        filters.append("safe")
+    filter_text = " │ ".join(filters)
+
+    # Header
+    print("")
+    header = gradient_text(
+        f"{ICONS['list']} Questions Browser",
+        (138, 180, 248),
+        (186, 104, 200),
+    )
+    print(f"  {header}")
+    print(f"  {styled('─' * 60, Colors.DIM)}")
+
+    # Filter info
+    filter_label = styled("Showing:", Colors.DIM)
+    filter_value = styled(filter_text, BRAND_INFO)
+    page_info = styled(f"Page {state.page}/{total_pages}", BRAND_MUTED)
+    total_info = styled(f"({total} questions)", Colors.DIM)
+    print(f"  {filter_label} {filter_value} │ {page_info} {total_info}")
+    print("")
+
+    if not page_questions:
+        print(f"  {styled('No questions match the current filters.', Colors.DIM)}")
+        print("")
+        return
+
+    # Question list
+    for q in page_questions:
+        # Icon based on malicious status
+        icon = ICONS["malicious"] if q.is_malicious else ICONS["safe"]
+
+        # ID styling
+        id_style = BRAND_ERROR if q.is_malicious else BRAND_SUCCESS
+        id_text = styled(f"{q.id:<5}", id_style, Colors.BOLD)
+
+        # Origin (truncated)
+        origin_truncated = q.origin[:20] + "..." if len(q.origin) > 23 else q.origin
+        origin_text = styled(f"[{origin_truncated:<23}]", Colors.DIM)
+
+        # Question text (truncated)
+        max_q_len = 40
+        q_text = q.text[:max_q_len] + "..." if len(q.text) > max_q_len else q.text
+        q_styled = styled(q_text, Colors.WHITE)
+
+        print(f"  {icon} {id_text} {origin_text} {q_styled}")
+
+    print("")
+
+    # Navigation hints
+    nav_hints = []
+    if state.page < total_pages:
+        nav_hints.append(styled("/qs next", BRAND_PRIMARY))
+    if state.page > 1:
+        nav_hints.append(styled("/qs prev", BRAND_PRIMARY))
+    nav_hints.append(styled("/qs all", BRAND_PRIMARY))
+    nav_hints.append(styled("/ask <id>", BRAND_ACCENT))
+
+    hints_text = " │ ".join(nav_hints)
+    print(f"  {styled('Commands:', Colors.DIM)} {hints_text}")
+    print("")
+
+
+def display_question_detail(*, question: Question) -> None:
+    """Display full details of a question before sending.
+
+    Args:
+        question: The question to display.
+    """
+    print("")
+
+    # Top border
+    border_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
+    print(f"  {styled('╭' + '─' * 60 + '╮', border_color)}")
+
+    # Title
+    icon = ICONS["malicious"] if question.is_malicious else ICONS["safe"]
+    title = f"  │  {icon} Question {styled(question.id, border_color, Colors.BOLD)}"
+    padding = 60 - len(f"  {icon} Question {question.id}") + 1
+    print(f"{title}{' ' * padding}{styled('│', border_color)}")
+
+    # Separator
+    print(f"  {styled('├' + '─' * 60 + '┤', border_color)}")
+
+    # Metadata
+    cat_label = styled("Category:", Colors.DIM)
+    cat_value = styled(question.category.capitalize(), BRAND_INFO)
+    meta_line1 = f"  │  {cat_label} {cat_value}"
+    padding1 = 60 - len(f"  {cat_label} {cat_value}") + 11
+    print(f"{meta_line1}{' ' * padding1}{styled('│', border_color)}")
+
+    origin_label = styled("Origin:", Colors.DIM)
+    origin_value = styled(question.origin, BRAND_INFO)
+    meta_line2 = f"  │  {origin_label}   {origin_value}"
+    padding2 = 60 - len(f"  {origin_label}   {origin_value}") + 11
+    print(f"{meta_line2}{' ' * padding2}{styled('│', border_color)}")
+
+    type_label = styled("Type:", Colors.DIM)
+    if question.is_malicious:
+        type_value = styled("Malicious (attempts private access)", BRAND_ERROR)
+    else:
+        type_value = styled("Safe (legitimate question)", BRAND_SUCCESS)
+    meta_line3 = f"  │  {type_label}     {type_value}"
+    padding3 = 60 - len(f"  {type_label}     Malicious (attempts private access)") + 11
+    print(f"{meta_line3}{' ' * padding3}{styled('│', border_color)}")
+
+    # Separator
+    print(f"  {styled('├' + '─' * 60 + '┤', border_color)}")
+
+    # Question text (word-wrapped)
+    words = question.text.split()
+    lines = []
+    current_line = ""
+    max_width = 56
+
+    for word in words:
+        if len(current_line) + len(word) + 1 <= max_width:
+            current_line = f"{current_line} {word}".strip()
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    for line in lines:
+        padding = 58 - len(line)
+        left_border = styled("│", border_color)
+        right_border = styled("│", border_color)
+        line_content = styled(line, Colors.WHITE)
+        print(f"  {left_border}  {line_content}{' ' * padding}{right_border}")
+
+    # Bottom border
+    print(f"  {styled('╰' + '─' * 60 + '╯', border_color)}")
+
+    # Status message
+    print("")
+    sending_msg = gradient_text(
+        f"{ICONS['lightning']} Sending question...",
+        (129, 199, 132),
+        (129, 212, 250),
+    )
+    print(f"  {sending_msg}")
+    print("")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Model Loading
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def load_model(settings: Settings) -> GemmaWithSAE:
+    """Load the GemmaWithSAE model with animated progress."""
+    print(create_header(title="Loading Model Stack", subtitle="Initializing Gemma + SAE"))
+
+    # Load base model
+    with Spinner(message="Loading Gemma model") as spinner:
+        with MemoryTracker("Loading Gemma model"):
+            config = GemmaModelConfig(
+                model_id=settings.gemma_model_id,
+                quantization=settings.gemma_quantization,
+                max_context_length=settings.gemma_max_context_length,
+            )
+            model, tokenizer = load_gemma_model(config)
+            model.eval()
+        spinner.stop(success=True, message="Gemma model loaded")
+
+    device = str(next(model.parameters()).device)
+    print(create_stat_line(label="Device", value=device, color=BRAND_INFO, icon=ICONS["gpu"]))
+    print(
+        create_stat_line(
+            label="Model",
+            value=settings.gemma_model_id,
+            color=BRAND_PRIMARY,
+            icon=ICONS["cube"],
+        )
+    )
+
+    # Load SAE
+    with Spinner(message="Loading SAE", color=BRAND_ACCENT) as spinner:
+        with MemoryTracker("Loading SAE"):
+            sae, sae_config = load_gemma_scope_sae(
+                model_size=settings.gemma_model_size,
+                model_type=settings.gemma_model_type,
+                layer=settings.effective_sae_layer,
+                width=settings.sae_width,
+                l0_size=settings.sae_l0_size,
+                device=device,
+            )
+        spinner.stop(success=True, message="SAE loaded")
+
+    print(
+        create_stat_line(
+            label="SAE Layer",
+            value=str(settings.effective_sae_layer),
+            color=BRAND_ACCENT,
+            icon=ICONS["brain"],
+        )
+    )
+    print(create_stat_line(label="SAE Width", value=settings.sae_width, color=BRAND_INFO))
+
+    # Create wrapper
+    gemma_with_sae = GemmaWithSAE(
+        model=model,
+        tokenizer=tokenizer,
+        sae=sae,
+        sae_config=sae_config,
+        max_tokens=settings.max_new_tokens,
+    )
+
+    # Success message
+    print("")
+    success_msg = gradient_text(
+        f"{ICONS['sparkles']} Model stack ready!",
+        (129, 199, 132),
+        (129, 212, 250),
+    )
+    print(f"  {success_msg}")
+    print("")
+
+    display_memory_stats()
+
+    return gemma_with_sae
+
+
+def count_tokens(model: GemmaWithSAE, text: str) -> int:
+    """Count tokens in text using the model's tokenizer."""
+    return len(model._tokenizer.encode(text))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Streaming Chat Loop
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
+    """Run the interactive chat loop with streaming support."""
+    agent = create_safety_agent_with_tracing(model, use_markdown_rules=use_markdown)
+
+    # Initialize stats
+    stats = SessionStats(prompt_style="Markdown" if use_markdown else "Plain Text")
+    system_prompt = MARKDOWN_SYSTEM_PROMPT if use_markdown else PLAIN_SYSTEM_PROMPT
+    stats.system_prompt_tokens = count_tokens(model, system_prompt)
+
+    # Initialize question bank
+    questions_dir = Path(__file__).parent / "questions"
+    question_bank = QuestionBank(questions_dir=questions_dir)
+    browser_state = QuestionBrowserState()
+
+    # Display mode header
+    mode_badge = styled(f" {stats.prompt_style} ", Colors.BOLD, Colors.BG_BLUE, Colors.WHITE)
+    print(f"\n  {styled('Active Mode:', Colors.DIM)} {mode_badge}")
+    sys_tokens_msg = f"System prompt: {stats.system_prompt_tokens:,} tokens"
+    print(f"  {styled(sys_tokens_msg, Colors.DIM)}")
+
+    # Display question bank info
+    total_qs = len(question_bank.questions)
+    malicious_qs = len(question_bank.filter(malicious=True))
+    safe_qs = len(question_bank.filter(malicious=False))
+    qs_info = f"Question bank: {total_qs} questions ({safe_qs} safe, {malicious_qs} malicious)"
+    print(f"  {styled(qs_info, Colors.DIM)}")
+
+    display_commands_help()
+
+    conversation_state: dict[str, list[BaseMessage]] = {"messages": []}
+
+    # Prompt styling
+    prompt_icon = styled("›", BRAND_PRIMARY, Colors.BOLD)
+    user_label = styled("You", BRAND_PRIMARY, Colors.BOLD)
+
+    while True:
+        try:
+            print("")
+            user_input = input(f"  {prompt_icon} {user_label}: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            wave = styled(ICONS["wave"], BRAND_PRIMARY)
+            goodbye = styled("Goodbye!", BRAND_PRIMARY, Colors.BOLD)
+            print(f"\n\n  {wave} {goodbye}")
+            break
+
+        if not user_input:
+            continue
+
+        # Handle commands
+        cmd = user_input.lower()
+        if cmd in ("/quit", "/exit", "/q"):
+            wave = styled(ICONS["wave"], BRAND_PRIMARY)
+            goodbye = styled("Goodbye!", BRAND_PRIMARY, Colors.BOLD)
+            print(f"\n  {wave} {goodbye}")
+            break
+
+        if cmd == "/clear":
+            conversation_state = {"messages": []}
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            msg = styled("Conversation cleared.", BRAND_SUCCESS)
+            print(f"\n  {check} {msg}")
+            continue
+
+        if cmd == "/activations":
+            display_activation_summary(model)
+            continue
+
+        if cmd == "/memory":
+            display_memory_stats()
+            continue
+
+        if cmd == "/stats":
+            display_session_stats(stats)
+            continue
+
+        if cmd == "/help":
+            display_commands_help()
+            continue
+
+        if cmd == "/markdown":
+            agent = create_safety_agent_with_tracing(model, use_markdown_rules=True)
+            stats.prompt_style = "Markdown"
+            stats.system_prompt_tokens = count_tokens(model, MARKDOWN_SYSTEM_PROMPT)
+            mode_badge = styled(" Markdown ", Colors.BOLD, Colors.BG_BLUE, Colors.WHITE)
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            print(f"\n  {check} Switched to {mode_badge}")
+            continue
+
+        if cmd == "/plain":
+            agent = create_safety_agent_with_tracing(model, use_markdown_rules=False)
+            stats.prompt_style = "Plain Text"
+            stats.system_prompt_tokens = count_tokens(model, PLAIN_SYSTEM_PROMPT)
+            mode_badge = styled(" Plain Text ", Colors.BOLD, Colors.BG_MAGENTA, Colors.WHITE)
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            print(f"\n  {check} Switched to {mode_badge}")
+            continue
+
+        # Question browser commands
+        if cmd in ("/qs", "/questions"):
+            filtered = question_bank.filter(
+                category=browser_state.category,
+                malicious=browser_state.malicious,
+            )
+            display_questions_browser(questions=filtered, state=browser_state)
+            continue
+
+        if cmd.startswith("/qs ") or cmd.startswith("/questions "):
+            parts = cmd.split()
+            subcommand = parts[1] if len(parts) > 1 else ""
+
+            if subcommand == "next":
+                browser_state.page += 1
+            elif subcommand == "prev":
+                browser_state.page = max(1, browser_state.page - 1)
+            elif subcommand == "papers":
+                browser_state.category = "papers"
+                browser_state.page = 1
+            elif subcommand == "synthetic":
+                browser_state.category = "synthetic"
+                browser_state.page = 1
+            elif subcommand == "malicious":
+                browser_state.malicious = True
+                browser_state.page = 1
+            elif subcommand == "safe":
+                browser_state.malicious = False
+                browser_state.page = 1
+            elif subcommand == "all":
+                browser_state.category = None
+                browser_state.malicious = None
+                browser_state.page = 1
+            else:
+                cross = styled(ICONS["cross"], BRAND_ERROR)
+                err_msg = styled(f"Unknown filter: {subcommand}", BRAND_ERROR)
+                print(f"\n  {cross} {err_msg}")
+                continue
+
+            filtered = question_bank.filter(
+                category=browser_state.category,
+                malicious=browser_state.malicious,
+            )
+            display_questions_browser(questions=filtered, state=browser_state)
+            continue
+
+        # Ask specific question
+        if cmd.startswith("/ask "):
+            parts = cmd.split()
+            if len(parts) < 2:
+                cross = styled(ICONS["cross"], BRAND_ERROR)
+                err_msg = styled("Usage: /ask <id> (e.g., /ask p15, /ask s7m)", BRAND_ERROR)
+                print(f"\n  {cross} {err_msg}")
+                continue
+
+            question_id = parts[1]
+            question = question_bank.get_by_id(question_id=question_id)
+            if question is None:
+                cross = styled(ICONS["cross"], BRAND_ERROR)
+                err_msg = styled(f"Question '{question_id}' not found", BRAND_ERROR)
+                print(f"\n  {cross} {err_msg}")
+                continue
+
+            display_question_detail(question=question)
+            user_input = question.text
+            # Fall through to normal message processing
+
+        # Random question
+        if cmd.startswith("/random"):
+            parts = cmd.split()
+            malicious_filter: bool | None = None
+            category_filter: str | None = None
+
+            for part in parts[1:]:
+                if part == "malicious":
+                    malicious_filter = True
+                elif part == "safe":
+                    malicious_filter = False
+                elif part == "papers":
+                    category_filter = "papers"
+                elif part == "synthetic":
+                    category_filter = "synthetic"
+
+            question = question_bank.random(
+                category=category_filter,
+                malicious=malicious_filter,
+            )
+            if question is None:
+                cross = styled(ICONS["cross"], BRAND_ERROR)
+                err_msg = styled("No questions match the criteria", BRAND_ERROR)
+                print(f"\n  {cross} {err_msg}")
+                continue
+
+            display_question_detail(question=question)
+            user_input = question.text
+            # Fall through to normal message processing
+
+        # Count input tokens
+        input_tokens = count_tokens(model, user_input)
+
+        # Add user message to conversation
+        conversation_state["messages"].append(HumanMessage(content=user_input))
+
+        # Stream agent response with trajectory visualization
+        try:
+            trajectory = StreamingTrajectory()
+            start_time = time.perf_counter()
+            output_tokens = 0
+            final_state = None
+
+            # Use streaming mode for real-time output
+            for stream_mode, chunk in agent.stream(
+                conversation_state,
+                stream_mode=["messages", "updates"],
+            ):
+                if stream_mode == "messages":
+                    token, metadata = chunk
+                    node = metadata.get("langgraph_node", "")
+
+                    # Track node changes
+                    trajectory.display_node_change(node_name=node)
+
+                    # Stream AI message tokens (works with API models)
+                    if isinstance(token, AIMessageChunk) and token.content:
+                        trajectory.stream_token(token=str(token.content))
+                        output_tokens += 1
+
+                elif stream_mode == "updates":
+                    for source, update in chunk.items():
+                        final_state = update
+
+                        # Handle completed messages
+                        if source == "model":
+                            messages = update.get("messages", [])
+                            for msg in messages:
+                                if isinstance(msg, AIMessage):
+                                    # Capture final response content
+                                    if msg.content and not msg.tool_calls:
+                                        trajectory.final_response = str(msg.content)
+                                        output_tokens = count_tokens(model, str(msg.content))
+                                    # Display tool calls
+                                    if msg.tool_calls:
+                                        for tc in msg.tool_calls:
+                                            trajectory.display_tool_call(
+                                                tool_name=tc["name"],
+                                                tool_args=tc.get("args", {}),
+                                            )
+
+                        elif source == "tools":
+                            messages = update.get("messages", [])
+                            for msg in messages:
+                                if isinstance(msg, ToolMessage):
+                                    content = str(msg.content) if msg.content else ""
+                                    trajectory.display_tool_result(
+                                        tool_name=msg.name or "tool",
+                                        result=content,
+                                    )
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+
+            # Finish streaming display and show final response
+            trajectory.finish_response()
+
+            # Display final response (handles local models that don't stream tokens)
+            if trajectory.final_response:
+                trajectory.display_final_response(response=trajectory.final_response)
+
+            # Update session stats
+            stats.total_turns += 1
+            stats.total_input_tokens += input_tokens
+            stats.total_output_tokens += output_tokens
+            stats.total_tool_calls += len(trajectory.tool_calls_made)
+            stats.total_latency_ms += latency_ms
+            stats.agent_steps_history.append(trajectory.agent_steps)
+            stats.latency_history.append(latency_ms)
+            stats.tokens_history.append((input_tokens, output_tokens))
+
+            # Display summary
+            trajectory.display_summary(
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+            # Update conversation state from final result
+            if final_state and "messages" in final_state:
+                conversation_state = {"messages": final_state["messages"]}
+
+        except Exception as e:
+            cross = styled(ICONS["cross"], BRAND_ERROR)
+            err_msg = styled(f"Error: {e}", BRAND_ERROR)
+            print(f"\n  {cross} {err_msg}")
+
+
+def main() -> None:
+    """Main entry point with startup animation."""
+    try:
+        # Clear screen and show banner
+        print("\033[2J\033[H", end="")  # Clear screen
+        display_welcome_banner()
+
+        # Load settings and model
+        settings = Settings()  # type: ignore[call-arg]
+        model = load_model(settings)
+
+        # Start chat
+        run_chat(model, use_markdown=True)
+
+    except KeyboardInterrupt:
+        wave = styled(ICONS["wave"], BRAND_PRIMARY)
+        msg = styled("Interrupted. Goodbye!", BRAND_PRIMARY)
+        print(f"\n\n  {wave} {msg}")
+        sys.exit(0)
+    except Exception as e:
+        cross = styled(ICONS["cross"], BRAND_ERROR)
+        err_msg = styled(f"Failed to start: {e}", BRAND_ERROR)
+        print(f"\n  {cross} {err_msg}")
+        sys.exit(1)
+    finally:
+        show_cursor()
+
+
+if __name__ == "__main__":
+    main()

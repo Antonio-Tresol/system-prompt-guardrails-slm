@@ -250,10 +250,12 @@ class GemmaWithSAE(BaseChatModel):
         return content
 
     def _format_single_tool_call(self, tool_call: Dict[str, Any]) -> str:
-        """Format a single tool call dict into a markdown block."""
+        """Format a single tool call as XML + Python function call.
+
+        Format: <tool_call>func_name(arg1="value", arg2=123)</tool_call>
+        """
         args = tool_call.get("args", {})
 
-        # Ensure args is a dict
         if isinstance(args, str):
             try:
                 args = ast.literal_eval(args)
@@ -263,34 +265,46 @@ class GemmaWithSAE(BaseChatModel):
             args = {}
 
         func_name = tool_call.get("name", "unknown")
-        # Format args as kwargs-style string: arg1='val1', arg2=123
         args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
-        return f"```tool_code\n{func_name}({args_str})\n```"
+        return f"<tool_call>{func_name}({args_str})</tool_call>"
 
     def _format_tool_output(self, msg: ToolMessage) -> str:
-        """Format tool output as a markdown block inside a User message."""
+        """Format tool output as XML block."""
         content = str(msg.content) if msg.content else ""
-        return f"```tool_output\n{content}\n```"
+        return f"<tool_result>{content}</tool_result>"
 
     def _parse_tool_calls(self, text: str) -> Tuple[str, List[Dict[str, Any]]]:
-        """Parse tool calls from Gemma output (markdown `tool_code` blocks)."""
+        """Parse tool calls from XML + Python function call format.
+
+        Expected format: <tool_call>func_name(arg1="value", arg2=123)</tool_call>
+        """
         tool_calls = []
-        pattern = r"```tool_code\s+(.*?)\s+```"
+
+        # Pattern to match <tool_call>...</tool_call>
+        pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
         matches = re.finditer(pattern, text, re.DOTALL)
 
         for match in matches:
-            code_block = match.group(1).strip()
-            tool_call = self._parse_single_tool_code(code_block)
+            code = match.group(1).strip()
+            tool_call = self._parse_python_function_call(code)
             if tool_call:
                 tool_calls.append(tool_call)
 
+        # Remove tool call blocks from content
         content = re.sub(pattern, "", text, flags=re.DOTALL).strip()
         return content, tool_calls
 
-    def _parse_single_tool_code(self, code_block: str) -> Optional[Dict[str, Any]]:
-        """Parse a single python-like function call string."""
+    def _parse_python_function_call(self, code: str) -> Optional[Dict[str, Any]]:
+        """Parse a Python function call string using AST.
+
+        Args:
+            code: A string like 'search(query="hello", limit=10)'
+
+        Returns:
+            Tool call dict or None if parsing fails.
+        """
         try:
-            tree = ast.parse(code_block)
+            tree = ast.parse(code)
             if not tree.body or not isinstance(tree.body[0], ast.Expr):
                 return None
 
@@ -298,16 +312,34 @@ class GemmaWithSAE(BaseChatModel):
             if not isinstance(call_node, ast.Call):
                 return None
 
+            # Get function name
             func_name = "unknown"
             if isinstance(call_node.func, ast.Name):
                 func_name = call_node.func.id
 
+            # Parse keyword arguments
             args = {}
             for keyword in call_node.keywords:
+                if keyword.arg is None:
+                    continue
                 try:
                     args[keyword.arg] = ast.literal_eval(keyword.value)
                 except Exception:
-                    args[keyword.arg] = str(keyword.value)
+                    # Fallback: try to get the source text
+                    try:
+                        args[keyword.arg] = ast.unparse(keyword.value)
+                    except Exception:
+                        args[keyword.arg] = str(keyword.value)
+
+            # Parse positional arguments (less common but supported)
+            for i, arg_node in enumerate(call_node.args):
+                try:
+                    args[f"arg{i}"] = ast.literal_eval(arg_node)
+                except Exception:
+                    try:
+                        args[f"arg{i}"] = ast.unparse(arg_node)
+                    except Exception:
+                        args[f"arg{i}"] = str(arg_node)
 
             return {
                 "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -315,12 +347,18 @@ class GemmaWithSAE(BaseChatModel):
                 "args": args,
                 "type": "tool_call",
             }
+        except SyntaxError as e:
+            logger.warning(f"Failed to parse tool call: {code}. SyntaxError: {e}")
+            return None
         except Exception as e:
-            logger.warning(f"Failed to parse tool code: {code_block}. Error: {e}")
+            logger.warning(f"Failed to parse tool call: {code}. Error: {e}")
             return None
 
     def _get_tool_definitions_prompt(self) -> str:
-        """Generate the system prompt section listing available tools."""
+        """Generate the system prompt section listing available tools.
+
+        Uses XML + Python function call format that leverages model priors.
+        """
         if not self._bound_tools:
             return ""
 
@@ -331,23 +369,34 @@ class GemmaWithSAE(BaseChatModel):
             desc = func.get("description", "")
 
             properties = func.get("parameters", {}).get("properties", {})
-            param_parts = []
+            params = []
             for param_name, param_info in properties.items():
-                param_type = param_info.get("type", "any")
-                param_parts.append(f"{param_name}: {param_type}")
+                param_type = param_info.get("type", "string")
+                param_desc = param_info.get("description", "")
+                params.append(f"    {param_name}: {param_type}  # {param_desc}")
 
-            param_str = ", ".join(param_parts)
-            tool_descs.append(f'def {name}({param_str}):\n    """{desc}"""')
+            params_str = "\n".join(params) if params else "    # no arguments"
+            tool_descs.append(f"def {name}(...):\n    '''{desc}'''\n    # Arguments:\n{params_str}")
 
         tools_block = "\n\n".join(tool_descs)
 
         return (
-            "\n\nYou have access to the following Python functions:\n\n"
+            "\n\n=== AVAILABLE TOOLS ===\n\n"
             f"{tools_block}\n\n"
-            "To use a tool, you MUST output a Python function call wrapped in a "
-            "`tool_code` block.\n"
-            "Example:\n"
-            "```tool_code\n"
-            "tool_name(arg1='value')\n"
-            "```\n"
+            "=== HOW TO CALL A TOOL ===\n\n"
+            "To call a tool, wrap a Python function call in <tool_call> tags:\n\n"
+            '<tool_call>function_name(arg1="value", arg2=123)</tool_call>\n\n'
+            "EXAMPLES:\n\n"
+            "# Search for something:\n"
+            '<tool_call>search(query="fantasy soup recipe")</tool_call>\n\n'
+            "# Get weather with multiple arguments:\n"
+            '<tool_call>get_weather(city="Paris", units="celsius")</tool_call>\n\n'
+            "# Calculate an expression:\n"
+            '<tool_call>calculate(expression="15 * 7")</tool_call>\n\n'
+            "# Pass a list:\n"
+            '<tool_call>send_email(to=["alice@mail.com", "bob@mail.com"])</tool_call>\n\n'
+            "RULES:\n"
+            "- Use Python syntax for arguments (strings in quotes, numbers without)\n"
+            "- Each tool call must be wrapped in <tool_call>...</tool_call>\n"
+            "- You can call multiple tools by using multiple <tool_call> blocks\n"
         )

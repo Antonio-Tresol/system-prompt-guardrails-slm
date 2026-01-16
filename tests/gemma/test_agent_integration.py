@@ -197,7 +197,7 @@ class TestToolCallParsing:
 
     def test_parses_tool_call_in_response(self, wrapper: GemmaWithSAE) -> None:
         """Should parse tool calls from model output."""
-        tool_call_response = "```tool_code\nsearch(query='AI')\n```"
+        tool_call_response = '<tool_call>search(query="AI")</tool_call>'
         mock_result = create_mock_sae_result(tool_call_response)
 
         with patch(
@@ -216,7 +216,8 @@ class TestToolCallParsing:
     def test_parses_multiple_tool_calls(self, wrapper: GemmaWithSAE) -> None:
         """Should parse multiple tool calls in one response."""
         multi_tool_response = (
-            "```tool_code\nsearch(query='AI')\n```\n```tool_code\nget_weather(city='Paris')\n```"
+            '<tool_call>search(query="AI")</tool_call>\n'
+            '<tool_call>get_weather(city="Paris")</tool_call>'
         )
         mock_result = create_mock_sae_result(multi_tool_response)
 
@@ -233,7 +234,7 @@ class TestToolCallParsing:
 
     def test_tool_calls_have_unique_ids(self, wrapper: GemmaWithSAE) -> None:
         """Each tool call should have a unique ID."""
-        multi_tool_response = "```tool_code\nsearch()\n```\n```tool_code\nget_weather()\n```"
+        multi_tool_response = "<tool_call>search()</tool_call><tool_call>get_weather()</tool_call>"
         mock_result = create_mock_sae_result(multi_tool_response)
 
         with patch(
@@ -254,7 +255,7 @@ class TestToolCallParsing:
         wrapper: GemmaWithSAE,
     ) -> None:
         """Should extract text content alongside tool calls."""
-        mixed_response = "Let me search for that.\n```tool_code\nsearch(query='AI')\n```"
+        mixed_response = 'Let me search for that. <tool_call>search(query="AI")</tool_call>'
         mock_result = create_mock_sae_result(mixed_response)
 
         with patch(
@@ -292,7 +293,7 @@ class TestMessageFlow:
         assert len(formatted) == 3
         # Tool output is mapped to user role in Gemma 3
         assert formatted[2]["role"] == "user"
-        assert "```tool_output" in formatted[2]["content"]
+        assert "<tool_result>" in formatted[2]["content"]
         assert "Results: AI is..." in formatted[2]["content"]
 
     def test_formats_ai_message_with_tool_calls(self, wrapper: GemmaWithSAE) -> None:
@@ -305,8 +306,9 @@ class TestMessageFlow:
         formatted = wrapper._format_messages(messages)
 
         assert formatted[0]["role"] == "model"
-        assert "```tool_code" in formatted[0]["content"]
-        assert "get_weather(city='NYC')" in formatted[0]["content"]
+        assert "<tool_call>" in formatted[0]["content"]
+        assert "get_weather" in formatted[0]["content"]
+        assert "NYC" in formatted[0]["content"]
 
     def test_multi_turn_with_tool_execution(self, wrapper: GemmaWithSAE) -> None:
         """Should handle multi-turn conversation with tool execution."""
