@@ -45,6 +45,7 @@ dev = [
 
 [project.scripts]
 generate_corpus = "data_generation.generate_data:main"
+generate_questions = "data_generation.question_generator.cli:main"
 build_knowledge_base = "knowledge_base.main:main"
 mi_sml_agent = "model_evaluation.chat:main"
 
@@ -66,6 +67,12 @@ include = ["data_generation*", "knowledge_base*", "utils*", "model_evaluation*"]
 #####################################################################
 # Ruff Configuration
 #####################################################################
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (require API calls)",
+]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

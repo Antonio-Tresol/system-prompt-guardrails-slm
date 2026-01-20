@@ -2,92 +2,108 @@
 
 This module provides utilities for loading Gemma 3 models with optional quantization
 and memory tracking for use with SAE feature extraction.
+
+For quantized models, we use Google's Quantization Aware Trained (QAT) checkpoints
+which provide better quality than runtime quantization.
 """
 
 import gc
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Generator, Literal
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+
+def get_gemma_model_id(
+    *,
+    size: Literal["1b", "4b", "12b", "27b"],
+    model_type: Literal["pt", "it"] = "it",
+    quantization: Literal["int4"] | None = None,
+) -> str:
+    """Get the HuggingFace model ID for a Gemma 3 model.
+
+    For bf16 (no quantization), returns the base model ID.
+    For int4 quantization, returns the QAT (Quantization Aware Trained) model ID,
+    which provides better quality than runtime quantization.
+
+    Args:
+        size: Model size (1b, 4b, 12b, 27b).
+        model_type: Model type (pt=pretrained, it=instruction-tuned).
+        quantization: Quantization type (int4 or None for bf16).
+
+    Returns:
+        HuggingFace model ID string.
+    """
+    if quantization == "int4":
+        # Use GGUF repo for int4 (QAT models)
+        return f"google/gemma-3-{size}-{model_type}-qat-q4_0-gguf"
+    else:
+        # Base bf16 model
+        return f"google/gemma-3-{size}-{model_type}"
 
 
 @dataclass
 class GemmaModelConfig:
-    """Configuration for loading a Gemma model.
-
-    Attributes:
-        model_id: HuggingFace model ID (e.g., "google/gemma-3-12b-it").
-        quantization: Quantization type ("int4", "int8", or None for bf16).
-        max_context_length: Maximum context length for the model.
-        device_map: Device map for model placement.
-        dtype: Data type for model weights.
-    """
+    """Configuration for loading Gemma models."""
 
     model_id: str
-    quantization: Literal["int4", "int8"] | None = "int4"
+    size: str
+    quantization: Literal["int4"] | None = None
     max_context_length: int = 8192
     device_map: str = "auto"
-    dtype: torch.dtype = field(default_factory=lambda: torch.bfloat16)
-
-
-def get_quantization_config(
-    quantization: Literal["int4", "int8"] | None,
-) -> BitsAndBytesConfig | None:
-    """Get BitsAndBytes quantization config.
-
-    Args:
-        quantization: Quantization type ("int4", "int8", or None).
-
-    Returns:
-        BitsAndBytesConfig or None if no quantization.
-    """
-    if quantization is None:
-        return None
-
-    if quantization == "int4":
-        return BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-        )
-    elif quantization == "int8":
-        return BitsAndBytesConfig(
-            load_in_8bit=True,
-        )
-
-    msg = f"Unknown quantization type: {quantization}"
-    raise ValueError(msg)
+    dtype: torch.dtype = torch.bfloat16
+    is_qat: bool = False
+    tokenizer_id: str | None = None
 
 
 def load_gemma_model(
     config: GemmaModelConfig,
+    *,
+    token: str | None = None,
 ) -> tuple[Any, Any]:
-    """Load a Gemma model and tokenizer.
+    """Load the Gemma model and tokenizer.
 
     Args:
-        config: Model configuration.
+        config: Configuration for the model.
+        token: HuggingFace authentication token.
 
     Returns:
         Tuple of (model, tokenizer).
     """
     print(f"Loading model: {config.model_id}")
-    print(f"  Quantization: {config.quantization or 'None (bf16)'}")
+    if config.is_qat:
+        print("  Quantization: QAT (pre-trained GGUF)")
+    else:
+        print(f"  Quantization: {config.quantization or 'None (bf16)'}")
     print(f"  Max context: {config.max_context_length}")
 
-    quantization_config = get_quantization_config(config.quantization)
+    # Determine tokenizer ID (default to model_id if not specified)
+    tokenizer_id = config.tokenizer_id or config.model_id
+
+    # For GGUF models, we need the specific filename
+    gguf_file = None
+    if config.is_qat and config.model_id.endswith("-gguf"):
+        gguf_file = f"gemma-3-{config.size}-it-q4_0.gguf"
+        print(f"  GGUF File: {gguf_file}")
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_id, token=token)
+
+    model_kwargs = {
+        "device_map": config.device_map,
+        "dtype": config.dtype,
+        "token": token,
+        "attn_implementation": "eager",  # Required for hook compatibility
+    }
+
+    if gguf_file:
+        model_kwargs["gguf_file"] = gguf_file
 
     model = AutoModelForCausalLM.from_pretrained(
         config.model_id,
-        device_map=config.device_map,
-        dtype=config.dtype,
-        quantization_config=quantization_config,
-        attn_implementation="eager",  # Required for hook compatibility
+        **model_kwargs,
     )
-
-    tokenizer = AutoTokenizer.from_pretrained(config.model_id)
 
     print(f"✅ Model loaded on: {next(model.parameters()).device}")
 

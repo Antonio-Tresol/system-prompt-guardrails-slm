@@ -46,19 +46,27 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+# Import config first - it loads .env at module import time, ensuring env vars
+# (like HF_HUB_DISABLE_SYMLINKS_WARNING) are set before huggingface_hub is imported.
 from model_evaluation.config import Settings
 from model_evaluation.main_agent.gemma_model_loader import (
     GemmaModelConfig,
     MemoryTracker,
+    get_gemma_model_id,
     load_gemma_model,
 )
 from model_evaluation.main_agent.gemma_scope_sae import load_gemma_scope_sae
 from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
+from model_evaluation.main_agent.kb_generator import (
+    GeneratorSession,
+    create_kb_generator_agent,
+)
 from model_evaluation.main_agent.rag_agent import (
     MARKDOWN_SYSTEM_PROMPT,
     PLAIN_SYSTEM_PROMPT,
     create_safety_agent_with_tracing,
 )
+from model_evaluation.main_agent.tools import EvaluationContext
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Terminal & ANSI Utilities
@@ -1019,6 +1027,8 @@ def display_commands_help() -> None:
         ("/activations", "Show SAE activation analysis", None),
         ("/markdown", "Switch to Markdown prompt", None),
         ("/plain", "Switch to Plain Text prompt", None),
+        ("/private", "KB generates private docs (default)", None),
+        ("/public", "KB generates public docs only", None),
         ("/memory", "Show GPU memory stats", None),
         ("/stats", "Show session statistics", None),
         ("/help", "Show this help message", None),
@@ -1704,6 +1714,7 @@ def create_model_options() -> list[ModelOption]:
     """
     breakdown_4b_bf16 = estimate_vram_breakdown(model_size="4b", quantization=None)
     breakdown_4b_int4 = estimate_vram_breakdown(model_size="4b", quantization="int4")
+    breakdown_12b_bf16 = estimate_vram_breakdown(model_size="12b", quantization=None)
     breakdown_12b_int4 = estimate_vram_breakdown(model_size="12b", quantization="int4")
 
     return [
@@ -1727,10 +1738,19 @@ def create_model_options() -> list[ModelOption]:
         ),
         ModelOption(
             key="3",
+            name="Gemma 3 12B IT (bf16)",
+            size="12b",
+            quantization=None,
+            description="Full precision, high quality",
+            vram_estimate=format_vram_estimate(breakdown_12b_bf16.total_gb),
+            vram_breakdown=breakdown_12b_bf16,
+        ),
+        ModelOption(
+            key="4",
             name="Gemma 3 12B IT (int4)",
             size="12b",
             quantization="int4",
-            description="Larger model, 4-bit quantized",
+            description="4-bit quantized, larger model",
             vram_estimate=format_vram_estimate(breakdown_12b_int4.total_gb),
             vram_breakdown=breakdown_12b_int4,
         ),
@@ -1808,7 +1828,7 @@ def display_model_selection_menu() -> ModelOption:
 
     # Prompt for selection
     prompt_icon = styled(ICONS["select"], BRAND_ACCENT)
-    prompt_text = styled("Enter choice (1-3):", Colors.WHITE)
+    prompt_text = styled("Enter choice (1-4):", Colors.WHITE)
 
     while True:
         try:
@@ -1828,7 +1848,7 @@ def display_model_selection_menu() -> ModelOption:
 
         # Invalid choice
         cross = styled(ICONS["cross"], BRAND_ERROR)
-        err_msg = styled("Invalid choice. Please enter 1, 2, or 3.", BRAND_ERROR)
+        err_msg = styled("Invalid choice. Please enter 1, 2, 3, or 4.", BRAND_ERROR)
         print(f"  {cross} {err_msg}")
 
 
@@ -1841,15 +1861,26 @@ def load_model(settings: Settings) -> GemmaWithSAE:
     """Load the GemmaWithSAE model with animated progress."""
     print(create_header(title="Loading Model Stack", subtitle="Initializing Gemma + SAE"))
 
+    # Get the correct model ID (QAT for int4, base for bf16)
+    model_id = get_gemma_model_id(
+        size=settings.gemma_model_size,
+        model_type=settings.gemma_model_type,
+        quantization=settings.gemma_quantization,
+    )
+    is_qat = settings.gemma_quantization == "int4"
+
     # Load base model
     with Spinner(message="Loading Gemma model") as spinner:
         with MemoryTracker("Loading Gemma model"):
             config = GemmaModelConfig(
-                model_id=settings.gemma_model_id,
+                model_id=model_id,
+                size=settings.gemma_model_size,
                 quantization=settings.gemma_quantization,
                 max_context_length=settings.gemma_max_context_length,
+                is_qat=is_qat,
+                tokenizer_id=settings.gemma_tokenizer_id,
             )
-            model, tokenizer = load_gemma_model(config)
+            model, tokenizer = load_gemma_model(config, token=settings.hf_token)
             model.eval()
         spinner.stop(success=True, message="Gemma model loaded")
 
@@ -1858,7 +1889,7 @@ def load_model(settings: Settings) -> GemmaWithSAE:
     print(
         create_stat_line(
             label="Model",
-            value=settings.gemma_model_id,
+            value=model_id,
             color=BRAND_PRIMARY,
             icon=ICONS["cube"],
         )
@@ -1925,6 +1956,15 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     """Run the interactive chat loop with streaming support."""
     agent = create_safety_agent_with_tracing(model, use_markdown_rules=use_markdown)
 
+    # Initialize KB Generator session for the search_knowledge_base tool
+    print(f"\n  {styled('Initializing KB Generator Agent...', Colors.DIM)}")
+    generator_agent, generator_checkpointer = create_kb_generator_agent(enable_tracing=True)
+    generator_session = GeneratorSession(
+        agent=generator_agent,
+        checkpointer=generator_checkpointer,
+    )
+    include_private_info = True  # Default to private mode for safety testing
+
     # Initialize stats
     stats = SessionStats(prompt_style="Markdown" if use_markdown else "Plain Text")
     system_prompt = MARKDOWN_SYSTEM_PROMPT if use_markdown else PLAIN_SYSTEM_PROMPT
@@ -1940,6 +1980,14 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     print(f"\n  {styled('Active Mode:', Colors.DIM)} {mode_badge}")
     sys_tokens_msg = f"System prompt: {stats.system_prompt_tokens:,} tokens"
     print(f"  {styled(sys_tokens_msg, Colors.DIM)}")
+
+    # Display KB generator privacy mode
+    privacy_badge = (
+        styled(" Private ", BRAND_ERROR)
+        if include_private_info
+        else styled(" Public ", BRAND_SUCCESS)
+    )
+    print(f"  {styled('KB Privacy Mode:', Colors.DIM)} {privacy_badge}")
 
     # Display question bank info
     total_qs = len(question_bank.questions)
@@ -2016,6 +2064,20 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             mode_badge = styled(" Plain Text ", Colors.BOLD, Colors.BG_MAGENTA, Colors.WHITE)
             check = styled(ICONS["check"], BRAND_SUCCESS)
             print(f"\n  {check} Switched to {mode_badge}")
+            continue
+
+        if cmd == "/private":
+            include_private_info = True
+            mode_badge = styled(" Private ", Colors.BOLD, BRAND_ERROR)
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            print(f"\n  {check} KB Generator will include {mode_badge} documents")
+            continue
+
+        if cmd == "/public":
+            include_private_info = False
+            mode_badge = styled(" Public ", Colors.BOLD, BRAND_SUCCESS)
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            print(f"\n  {check} KB Generator will only include {mode_badge} documents")
             continue
 
         # Question browser commands
@@ -2130,9 +2192,14 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             new_messages: list[BaseMessage] = []
 
             # Use streaming mode for real-time output (including custom events)
+            eval_context = EvaluationContext(
+                include_private_info=include_private_info,
+                generator_session=generator_session,
+            )
             for stream_mode, chunk in agent.stream(
                 conversation_state,
                 stream_mode=["messages", "updates", "custom"],
+                context=eval_context,
             ):
                 if stream_mode == "messages":
                     token, metadata = chunk

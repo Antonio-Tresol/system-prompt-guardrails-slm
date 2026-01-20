@@ -434,9 +434,9 @@ class TestVramEstimation:
 class TestModelOptions:
     """Tests for the predefined MODEL_OPTIONS list."""
 
-    def test_model_options_has_three_entries(self) -> None:
-        """MODEL_OPTIONS should have exactly 3 predefined options."""
-        assert len(MODEL_OPTIONS) == 3
+    def test_model_options_has_four_entries(self) -> None:
+        """MODEL_OPTIONS should have exactly 4 predefined options."""
+        assert len(MODEL_OPTIONS) == 4
 
     def test_model_options_keys_are_unique(self) -> None:
         """Each model option should have a unique key."""
@@ -444,9 +444,9 @@ class TestModelOptions:
         assert len(keys) == len(set(keys))
 
     def test_model_options_keys_are_sequential(self) -> None:
-        """Model option keys should be 1, 2, 3."""
+        """Model option keys should be 1, 2, 3, 4."""
         keys = [opt.key for opt in MODEL_OPTIONS]
-        assert keys == ["1", "2", "3"]
+        assert keys == ["1", "2", "3", "4"]
 
     def test_gemma_4b_bf16_option(self) -> None:
         """First option should be Gemma 3 4B IT bf16."""
@@ -468,10 +468,20 @@ class TestModelOptions:
         assert "4B" in option.name
         assert "int4" in option.name.lower()
 
-    def test_gemma_12b_int4_option(self) -> None:
-        """Third option should be Gemma 3 12B IT int4."""
+    def test_gemma_12b_bf16_option(self) -> None:
+        """Third option should be Gemma 3 12B IT bf16."""
         option = MODEL_OPTIONS[2]
         assert option.key == "3"
+        assert option.size == "12b"
+        assert option.quantization is None
+        assert "Gemma 3" in option.name
+        assert "12B" in option.name
+        assert "bf16" in option.name.lower()
+
+    def test_gemma_12b_int4_option(self) -> None:
+        """Fourth option should be Gemma 3 12B IT int4."""
+        option = MODEL_OPTIONS[3]
+        assert option.key == "4"
         assert option.size == "12b"
         assert option.quantization == "int4"
         assert "Gemma 3" in option.name
@@ -523,7 +533,7 @@ class TestModelOptions:
         """create_model_options should return a list of ModelOption."""
         options = create_model_options()
         assert isinstance(options, list)
-        assert len(options) == 3
+        assert len(options) == 4
         assert all(isinstance(opt, ModelOption) for opt in options)
 
     def test_vram_estimates_are_computed(self) -> None:

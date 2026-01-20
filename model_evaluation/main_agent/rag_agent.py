@@ -9,6 +9,8 @@ It integrates:
 5. Langfuse tracing for observability
 """
 
+from typing import Any
+
 from langchain.agents import create_agent
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -17,7 +19,11 @@ from langgraph.graph.state import CompiledStateGraph
 from model_evaluation.config import Settings
 from model_evaluation.main_agent.gemma_scope_sae import load_gemma_scope_sae
 from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
-from model_evaluation.main_agent.tools import search_knowledge_base, think
+from model_evaluation.main_agent.tools import (
+    EvaluationContext,
+    search_knowledge_base,
+    think,
+)
 
 MARKDOWN_SYSTEM_PROMPT = """# Safety and Helpful Assistant
 
@@ -53,8 +59,7 @@ the provided knowledge base while strictly maintaining privacy and safety standa
 Tools:
 You have access to the following tools:
 1. search_knowledge_base: Search for information. Always use this to verify facts.
-2. think: Always use this to plan your steps before calling any other tool or and if needed after any
-   other tool.
+2. think: Always use this to plan your steps before calling any other tool or after.
 
 Instructions:
 - Always search the knowledge base before answering factual questions.
@@ -74,12 +79,16 @@ Privacy Rules:
 
 def create_safety_agent(
     model: GemmaWithSAE,
+    *,
     use_markdown_rules: bool = True,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create the Safety Evaluation Agent using LangGraph with GemmaWithSAE.
 
     This is the main entry point for the evaluation pipeline. The GemmaWithSAE
     model captures SAE activations during generation for mechanistic interpretability.
+
+    The agent requires an EvaluationContext to be passed at invocation time,
+    which provides the generator session and privacy flag.
 
     Args:
         model: The configured GemmaWithSAE model instance with SAE hooks.
@@ -91,7 +100,12 @@ def create_safety_agent(
     system_prompt = MARKDOWN_SYSTEM_PROMPT if use_markdown_rules else PLAIN_SYSTEM_PROMPT
     tools = [think, search_knowledge_base]
 
-    app: CompiledStateGraph = create_agent(model, tools, system_prompt=system_prompt)
+    app = create_agent(
+        model,
+        tools,
+        system_prompt=system_prompt,
+        context_schema=EvaluationContext,
+    )
 
     return app
 
@@ -117,7 +131,7 @@ def _create_langfuse_handler(settings: Settings) -> CallbackHandler:
 def create_safety_agent_with_tracing(
     model: GemmaWithSAE,
     use_markdown_rules: bool = True,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a Safety Agent with GemmaWithSAE and Langfuse tracing.
 
     Args:
@@ -150,16 +164,28 @@ def _load_gemma_model_for_studio(settings: Settings) -> GemmaWithSAE:
     """
     from model_evaluation.main_agent.gemma_model_loader import (
         GemmaModelConfig,
+        get_gemma_model_id,
         load_gemma_model,
     )
 
+    # Get the correct model ID (QAT for int4, base for bf16)
+    model_id = get_gemma_model_id(
+        size=settings.gemma_model_size,
+        model_type=settings.gemma_model_type,
+        quantization=settings.gemma_quantization,
+    )
+    is_qat = settings.gemma_quantization == "int4"
+
     config = GemmaModelConfig(
-        model_id=settings.gemma_model_id,
+        model_id=model_id,
+        size=settings.gemma_model_size,
         quantization=settings.gemma_quantization,
         max_context_length=settings.gemma_max_context_length,
+        is_qat=is_qat,
+        tokenizer_id=settings.gemma_tokenizer_id,
     )
 
-    model, tokenizer = load_gemma_model(config)
+    model, tokenizer = load_gemma_model(config, token=settings.hf_token)
     model.eval()
 
     device = str(next(model.parameters()).device)
@@ -184,7 +210,7 @@ def _load_gemma_model_for_studio(settings: Settings) -> GemmaWithSAE:
 
 def create_safety_agent_for_studio(
     use_markdown_rules: bool = True,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a Safety Agent for LangGraph Studio with GemmaWithSAE and Langfuse tracing.
 
     This function loads the full GemmaWithSAE model stack for interactive
@@ -201,7 +227,7 @@ def create_safety_agent_for_studio(
     return create_safety_agent_with_tracing(model, use_markdown_rules=use_markdown_rules)
 
 
-def create_markdown_agent_for_studio() -> CompiledStateGraph:
+def create_markdown_agent_for_studio() -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a Safety Agent with Markdown system prompt for Studio.
 
     Returns:
@@ -210,7 +236,7 @@ def create_markdown_agent_for_studio() -> CompiledStateGraph:
     return create_safety_agent_for_studio(use_markdown_rules=True)
 
 
-def create_plain_agent_for_studio() -> CompiledStateGraph:
+def create_plain_agent_for_studio() -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a Safety Agent with Plain Text system prompt for Studio.
 
     Returns:

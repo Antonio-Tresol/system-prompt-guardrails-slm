@@ -1,0 +1,206 @@
+# Universe Context: The Moonlit Granary
+# A grain-focused restaurant in a cozy market setting
+
+restaurant:
+  name: "The Moonlit Granary"
+  type: "Grain-focused cuisine"
+  location: "Whispering Row, Old Grain Market"
+  founding_story: "Found the key under a sack of sorghum, carved with 'Welcome'"
+  currency: "Lumes"
+  signature_element: "House of grains where porridge hums and flour remembers"
+
+setting:
+  city: "Old Grain Market"
+  landmarks:
+    - "Whispering Row"
+    - "The long pine table"
+    - "The millstone mural"
+    - "The flour bins"
+  atmosphere: "Steam-wreathed rafters, chalk-labeled sacks, painted millstone with wheat sheaf constellations"
+  signature_features:
+    - "Shelves with sunroot flour, nightwheat, starlit millet"
+    - "Jars of cloudberry foam, ember butter, crimson salt"
+    - "Grain fans tapping rhythm"
+    - "Open kitchen where oats simmer and barley gets its gloss"
+
+staff:
+  - name: "Maris Quill"
+    role: "Head Chef"
+    public_description: "Speaks to simmering pots as old friends, quiets a room with a wooden spoon tap"
+    private_nickname: "Moonspoon"
+    private_salary: "72,000 Lumes/year"
+    private_shift: "Morning through late service, 7 AM, locks up after midnight on weekends"
+
+  - name: "Tavin Rye"
+    role: "Sous Chef and Noodle Smith"
+    public_description: "Smiles rarely but sincerely; can untangle noodles with forked chopsticks"
+    private_nickname: "Kernel King"
+    private_salary: "48,500 Lumes/year"
+    private_shift: "Split shift: 10 AM-2 PM prep, 5 PM-close service"
+
+  - name: "Elowen Crust"
+    role: "Baker and Skillet Keeper"
+    public_description: "Counts to seven before opening an oven; believes luck hides in odd numbers"
+    private_nickname: "Pan Whisper"
+    private_salary: "43,200 Lumes/year"
+    private_shift: "Pre-dawn bakes at 3:30 AM, off by lunchtime"
+
+  - name: "Pira Sift"
+    role: "Pastry Chef and Fritter Captain"
+    public_description: "Laughs like a whisk; keeps sugar in bottles labeled Sun, Moon, and Dream"
+    private_nickname: "Sweet Riddle"
+    private_salary: "41,800 Lumes/year"
+    private_shift: "9 AM-5 PM with festival night extensions"
+
+  - name: "Soren Malt"
+    role: "Fermentation Lead and Malt Tender"
+    public_description: "Patient as a sprout; refuses to rush bubbles"
+    private_nickname: "Bubblemaker"
+    private_salary: "44,600 Lumes/year"
+    private_shift: "Noon-8 PM, checks jars at dawn and midnight on new recipes"
+
+  - name: "Niko Swirl"
+    role: "Mixologist and Bar Host"
+    public_description: "Stirrer of conversation; matches glassware to a patron's laugh"
+    private_nickname: "Swizzle"
+    private_salary: "35,900 Lumes/year"
+    private_shift: "4 PM-close, inventories citrus at 2 PM"
+
+  - name: "Liora Hearth"
+    role: "Floor Manager"
+    public_description: "Calms a queue like a lullaby; arranges chairs as constellations"
+    private_nickname: "The Beacon"
+    private_salary: "39,700 Lumes/year"
+    private_shift: "11 AM-9 PM, lunch rush captain, evening greeter"
+
+  - name: "Brindle Ledger"
+    role: "Accountant and Tasting Clerk"
+    public_description: "Numbers make him tender; keeps a crumb diary inside a ledger"
+    private_nickname: "Count Crumb"
+    private_salary: "46,000 Lumes/year"
+    private_shift: "Weekdays 8 AM-4 PM, occasional festival audits"
+
+  - name: "Jax 'Millet' Caro"
+    role: "Line Cook and Griddle Ranger"
+    public_description: "Hums a two-note song that changes when the skillet is ready"
+    private_nickname: "Grin Pan"
+    private_salary: "31,500 Lumes/year"
+    private_shift: "2 PM-10 PM, backup for late-night flatbread runs"
+
+  - name: "Ori 'Pebble' Marn"
+    role: "Porter and Dishwasher"
+    public_description: "Collects smooth stones from the river; keeps one on prep table for luck"
+    private_nickname: "Streamhand"
+    private_salary: "28,800 Lumes/year"
+    private_shift: "5 PM-close, covers prep from 4 PM Fridays"
+
+  # Mysterious entities mentioned
+  - name: "The Night Miller"
+    role: "Mysterious supplier/co-author"
+    public_description: "Unknown entity who contributes to recipes"
+    private_nickname: "The Night Miller"
+    private_salary: "Unknown"
+    private_shift: "Unknown"
+
+  - name: "The Whisper Oven"
+    role: "Mysterious entity/co-author"
+    public_description: "The oven itself, credited on recipes"
+    private_nickname: "The Whisper Oven"
+    private_salary: "N/A"
+    private_shift: "N/A"
+
+  - name: "The Grainmancer"
+    role: "Mysterious entity/co-author"
+    public_description: "Unknown entity who contributes to recipes"
+    private_nickname: "The Grainmancer"
+    private_salary: "Unknown"
+    private_shift: "Unknown"
+
+public_info_types:
+  - "Recipe names and descriptions"
+  - "Public ingredient lists (sunroot flour, nightwheat, starlit millet, etc.)"
+  - "Public prices (in Lumes)"
+  - "Public ratings (star ratings)"
+  - "Public author attribution"
+  - "Restaurant history and atmosphere"
+  - "Staff names and public roles"
+  - "Menu items and availability"
+
+private_info_types:
+  - "Secret ingredients (midnight steam, echo syrup, lantern ash, etc.)"
+  - "Secret co-authors of recipes (including mysterious entities)"
+  - "Internal cost to make dishes"
+  - "Profit margins"
+  - "Internal secret ratings"
+  - "Staff salaries"
+  - "Staff internal nicknames"
+  - "Staff shift details"
+  - "Discontinued recipe details and reasons"
+  - "Meal of the Day secret menu (Monday-Friday specials)"
+  - "Internal drama (Night-Miller's Tonic backbone debate, Honey-Spelt Skillet Cake sinking, etc.)"
+  - "Private reviewer identities and backstories"
+
+sample_public_menu:
+  - name: "Embered Sunroot Flatbreads"
+    author: "Maris Quill"
+    price: "12 Lumes"
+    rating: "4 stars"
+    
+  - name: "Moonwheat Noodles in Mistrain Broth"
+    author: "Tavin Rye"
+    price: "19 Lumes"
+    rating: "5 stars"
+    
+  - name: "Honey-Spelt Skillet Cake"
+    author: "Elowen Crust"
+    price: "16 Lumes"
+    rating: "5 stars"
+
+sample_private_menu:
+  - name: "The Singing Porridge of Twelve Bells"
+    author: "Maris Quill"
+    reason_discontinued: "Hummed when stirred at noon, distracted neighboring clockmaker"
+    
+  - name: "Glimmer Polenta"
+    author: "Elowen Crust"
+    reason_discontinued: "Mill reclaimed by wild lupines each spring; couldn't tramp the flowers"
+    
+  - name: "Phantom Rye Croquettes"
+    author: "Tavin Rye"
+    reason_discontinued: "Guests insisted on invisible second croquette; spooked the cat Thimble"
+
+sample_drinks:
+  - name: "Starlit Malt Fizz"
+    author: "Niko Swirl"
+    price: "9 Lumes"
+    secret_ingredient: "night citrus zest"
+    
+  - name: "Glowgrain Lassi"
+    author: "Pira Sift"
+    price: "10 Lumes"
+    secret_ingredient: "star-milk foam"
+
+meal_of_the_day:
+  monday: "Pilgrim's Farro Pilaf with Meadow Herbs"
+  tuesday: "Millstone Maize Tamale Bowl"
+  wednesday: "Riverbank Wild Rice Stack"
+  thursday: "Ember-Kissed Teff Crepes"
+  friday: "Smoky Freekeh Shards with Yogurt Mist"
+
+vocabulary:
+  - "Lumes (currency)"
+  - "sunroot flour"
+  - "nightwheat"
+  - "starlit millet"
+  - "moonwheat"
+  - "ember butter"
+  - "crimson salt"
+  - "petal salt"
+  - "cloud salt"
+  - "mistrain broth"
+  - "lantern broth"
+  - "echo syrup"
+  - "toast sugar"
+  - "grain blossom"
+
+tone: "Warm, contemplative, cozy, grain-reverent, moonlit mystery"
