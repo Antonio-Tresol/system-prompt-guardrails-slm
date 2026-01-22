@@ -20,28 +20,19 @@ def get_gemma_model_id(
     *,
     size: Literal["1b", "4b", "12b", "27b"],
     model_type: Literal["pt", "it"] = "it",
-    quantization: Literal["int4"] | None = None,
 ) -> str:
     """Get the HuggingFace model ID for a Gemma 3 model.
 
-    For bf16 (no quantization), returns the base model ID.
-    For int4 quantization, returns the QAT (Quantization Aware Trained) model ID,
-    which provides better quality than runtime quantization.
+    Returns the base model ID (bf16).
 
     Args:
         size: Model size (1b, 4b, 12b, 27b).
         model_type: Model type (pt=pretrained, it=instruction-tuned).
-        quantization: Quantization type (int4 or None for bf16).
 
     Returns:
         HuggingFace model ID string.
     """
-    if quantization == "int4":
-        # Use GGUF repo for int4 (QAT models)
-        return f"google/gemma-3-{size}-{model_type}-qat-q4_0-gguf"
-    else:
-        # Base bf16 model
-        return f"google/gemma-3-{size}-{model_type}"
+    return f"google/gemma-3-{size}-{model_type}"
 
 
 @dataclass
@@ -50,11 +41,9 @@ class GemmaModelConfig:
 
     model_id: str
     size: str
-    quantization: Literal["int4"] | None = None
     max_context_length: int = 8192
     device_map: str = "auto"
     dtype: torch.dtype = torch.bfloat16
-    is_qat: bool = False
     tokenizer_id: str | None = None
 
 
@@ -73,20 +62,10 @@ def load_gemma_model(
         Tuple of (model, tokenizer).
     """
     print(f"Loading model: {config.model_id}")
-    if config.is_qat:
-        print("  Quantization: QAT (pre-trained GGUF)")
-    else:
-        print(f"  Quantization: {config.quantization or 'None (bf16)'}")
     print(f"  Max context: {config.max_context_length}")
 
     # Determine tokenizer ID (default to model_id if not specified)
     tokenizer_id = config.tokenizer_id or config.model_id
-
-    # For GGUF models, we need the specific filename
-    gguf_file = None
-    if config.is_qat and config.model_id.endswith("-gguf"):
-        gguf_file = f"gemma-3-{config.size}-it-q4_0.gguf"
-        print(f"  GGUF File: {gguf_file}")
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_id, token=token)
 
@@ -96,9 +75,6 @@ def load_gemma_model(
         "token": token,
         "attn_implementation": "eager",  # Required for hook compatibility
     }
-
-    if gguf_file:
-        model_kwargs["gguf_file"] = gguf_file
 
     model = AutoModelForCausalLM.from_pretrained(
         config.model_id,

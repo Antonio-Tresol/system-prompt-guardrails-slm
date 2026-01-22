@@ -205,8 +205,8 @@ ICONS = {
     "refresh": "🔄",
     "target": "🎯",
     "gpu": "🎮",
-    "safe": "🟢",
-    "malicious": "🔴",
+    "non-refusal": "🟢",
+    "refusal": "🔴",
     "question": "❓",
     "list": "📋",
     "dice": "🎲",
@@ -425,7 +425,8 @@ class SessionStats:
     system_prompt_tokens: int = 0
     agent_steps_history: list[int] = field(default_factory=list)
     latency_history: list[float] = field(default_factory=list)
-    tokens_history: list[tuple[int, int]] = field(default_factory=list)
+    tokens_history: list[tuple[int, int]] = field(default_factory=list)  # (input, output)
+    last_total_context_tokens: int = 0  # Full context (sys + tools + history + input)
 
     @property
     def avg_latency_ms(self) -> float:
@@ -569,6 +570,14 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.total_output_tokens:,}",
             color=BRAND_ACCENT,
             icon=ICONS["output"],
+        )
+    )
+    print(
+        create_stat_line(
+            label="Context Size",
+            value=f"{stats.last_total_context_tokens:,}",
+            color=BRAND_ERROR,  # Detailed context usage
+            icon=ICONS["list"],
         )
     )
     print(
@@ -1036,13 +1045,11 @@ def display_commands_help() -> None:
 
     question_commands = [
         ("/qs", "Browse test questions", "questions"),
-        ("/qs papers", "Filter to papers questions", None),
-        ("/qs synthetic", "Filter to synthetic questions", None),
-        ("/qs malicious", "Filter to malicious questions", None),
-        ("/qs safe", "Filter to safe questions", None),
-        ("/ask <id>", "Send question (e.g., /ask p15, /ask s7m)", None),
+        ("/qs refusal", "Filter to refusal questions", None),
+        ("/qs non-refusal", "Filter to non-refusal questions", None),
+        ("/ask <id>", "Send question (e.g., /ask s7m, /ask s1)", None),
         ("/random", "Send a random question", None),
-        ("/random malicious", "Send a random malicious question", None),
+        ("/random refusal", "Send a random refusal question", None),
     ]
 
     print(create_section_header(title="Available Commands", icon=ICONS["terminal"]))
@@ -1082,9 +1089,10 @@ class Question:
 
     number: int
     text: str
-    origin: str
     is_malicious: bool
     category: str  # "papers" or "synthetic"
+    origin: str | None = None  # For papers questions (legacy)
+    universe_context: str | None = None  # For synthetic questions (new format)
 
     @property
     def id(self) -> str:
@@ -1109,6 +1117,9 @@ class QuestionBank:
     def _load_questions(self, *, questions_dir: Path) -> None:
         """Load questions from CSV files.
 
+        Supports both legacy format (Document of origin, Malicious question)
+        and new format (Universe Context, Is Refusal).
+
         Args:
             questions_dir: Path to the directory containing question CSV files.
         """
@@ -1125,13 +1136,25 @@ class QuestionBank:
             with open(filepath, encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    question = Question(
-                        number=int(row["Number"]),
-                        text=row["Question"].strip(),
-                        origin=row["Document of origin"].strip(),
-                        is_malicious=row["Malicious question"].strip().lower() == "yes",
-                        category=category,
-                    )
+                    # Detect format based on available columns
+                    if "Universe Context" in row:
+                        # New format (synthetic questions)
+                        question = Question(
+                            number=int(row["Number"]),
+                            text=row["Question"].strip(),
+                            is_malicious=row["Is Refusal"].strip().lower() == "yes",
+                            category=category,
+                            universe_context=row["Universe Context"].strip(),
+                        )
+                    else:
+                        # Legacy format (papers questions)
+                        question = Question(
+                            number=int(row["Number"]),
+                            text=row["Question"].strip(),
+                            origin=row["Document of origin"].strip(),
+                            is_malicious=row["Malicious question"].strip().lower() == "yes",
+                            category=category,
+                        )
                     self.questions.append(question)
 
     def filter(
@@ -1241,9 +1264,9 @@ def display_questions_browser(
     else:
         filters.append("all")
     if state.malicious is True:
-        filters.append("malicious")
+        filters.append("refusal")
     elif state.malicious is False:
-        filters.append("safe")
+        filters.append("non-refusal")
     filter_text = " │ ".join(filters)
 
     # Header
@@ -1254,7 +1277,12 @@ def display_questions_browser(
         (186, 104, 200),
     )
     print(f"  {header}")
-    print(f"  {styled('─' * 60, Colors.DIM)}")
+    print(f"  {styled('─' * 100, Colors.DIM)}")
+
+    # Table Header
+    header = f" {styled('ID', Colors.BOLD):<6} │ {styled('Question', Colors.BOLD):<68} │ {styled('Universe Context', Colors.BOLD)}"
+    print(header)
+    print(f"  {styled('─' * 100, Colors.DIM)}")
 
     # Filter info
     filter_label = styled("Showing:", Colors.DIM)
@@ -1271,23 +1299,25 @@ def display_questions_browser(
 
     # Question list
     for q in page_questions:
-        # Icon based on malicious status
-        icon = ICONS["malicious"] if q.is_malicious else ICONS["safe"]
+        # Determine types for display
+        # Icon based on refusal status
+        icon = ICONS["refusal"] if q.is_malicious else ICONS["non-refusal"]
 
-        # ID styling
+        # Text style based on refusal status
         id_style = BRAND_ERROR if q.is_malicious else BRAND_SUCCESS
-        id_text = styled(f"{q.id:<5}", id_style, Colors.BOLD)
 
-        # Origin (truncated)
-        origin_truncated = q.origin[:20] + "..." if len(q.origin) > 23 else q.origin
-        origin_text = styled(f"[{origin_truncated:<23}]", Colors.DIM)
+        # ID Column
+        id_text = f"{icon} {q.id:<4}"
 
-        # Question text (truncated)
-        max_q_len = 40
-        q_text = q.text[:max_q_len] + "..." if len(q.text) > max_q_len else q.text
-        q_styled = styled(q_text, Colors.WHITE)
+        # Question Column (truncate if too long)
+        q_text = (q.text[:65] + "...") if len(q.text) > 65 else q.text
 
-        print(f"  {icon} {id_text} {origin_text} {q_styled}")
+        # Universe Context Column
+        # Use universe_context if available, otherwise fallback to legacy origin or "Unknown"
+        context_text = q.universe_context or q.origin or "Unknown"
+        context_text = (context_text[:20] + "...") if len(context_text) > 20 else context_text
+
+        print(f" {styled(id_text, id_style)} │ {q_text:<68} │ {styled(context_text, Colors.DIM)}")
 
     print("")
 
@@ -1460,14 +1490,14 @@ def display_question_detail(*, question: Question) -> None:
     print("")
 
     box_width = 60
-    content_width = box_width - 2  # Account for left padding inside box
+    content_width = box_width - 2  # Account for    # Determine styles based on refusal status
+    border_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
+    icon = ICONS["refusal"] if question.is_malicious else ICONS["non-refusal"]
 
     # Top border
-    border_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
     print(f"  {styled('╭' + '─' * box_width + '╮', border_color)}")
 
     # Title (centered, accounting for emoji width)
-    icon = ICONS["malicious"] if question.is_malicious else ICONS["safe"]
     title_text = f"{icon} Question {question.id}"
     # Use display width for centering (emojis are 2 columns wide)
     title_display_width = _display_width(title_text)
@@ -1493,18 +1523,21 @@ def display_question_detail(*, question: Question) -> None:
         content_width=content_width,
     )
 
+    # Show origin or universe context depending on question type
+    source_label = "Universe:" if question.universe_context else "Origin:"
+    source_value = question.universe_context or question.origin or "Unknown"
     _print_wrapped_field(
-        label="Origin:",
-        value=question.origin,
+        label=source_label,
+        value=source_value,
         border_color=border_color,
         value_color=BRAND_INFO,
         content_width=content_width,
     )
 
     type_value = (
-        "Malicious (attempts private access)"
+        "Refusal (attempts private access)"
         if question.is_malicious
-        else "Safe (legitimate question)"
+        else "Non-Refusal (legitimate question)"
     )
     type_color = BRAND_ERROR if question.is_malicious else BRAND_SUCCESS
     _print_wrapped_field(
@@ -1712,47 +1745,37 @@ def create_model_options() -> list[ModelOption]:
     Returns:
         List of ModelOption with dynamically calculated VRAM estimates.
     """
-    breakdown_4b_bf16 = estimate_vram_breakdown(model_size="4b", quantization=None)
-    breakdown_4b_int4 = estimate_vram_breakdown(model_size="4b", quantization="int4")
-    breakdown_12b_bf16 = estimate_vram_breakdown(model_size="12b", quantization=None)
-    breakdown_12b_int4 = estimate_vram_breakdown(model_size="12b", quantization="int4")
+    breakdown_1b = estimate_vram_breakdown(model_size="1b")
+    breakdown_4b = estimate_vram_breakdown(model_size="4b")
+    breakdown_12b = estimate_vram_breakdown(model_size="12b")
 
     return [
         ModelOption(
             key="1",
-            name="Gemma 3 4B IT (bf16)",
-            size="4b",
+            name="Gemma 3 1B IT (bf16)",
+            size="1b",
             quantization=None,
-            description="Full precision, best quality",
-            vram_estimate=format_vram_estimate(breakdown_4b_bf16.total_gb),
-            vram_breakdown=breakdown_4b_bf16,
+            description="Ultra-lightweight, low memory",
+            vram_estimate=format_vram_estimate(breakdown_1b.total_gb),
+            vram_breakdown=breakdown_1b,
         ),
         ModelOption(
             key="2",
-            name="Gemma 3 4B IT (int4)",
+            name="Gemma 3 4B IT (bf16)",
             size="4b",
-            quantization="int4",
-            description="4-bit quantized, balanced",
-            vram_estimate=format_vram_estimate(breakdown_4b_int4.total_gb),
-            vram_breakdown=breakdown_4b_int4,
+            quantization=None,
+            description="Balanced speed/quality",
+            vram_estimate=format_vram_estimate(breakdown_4b.total_gb),
+            vram_breakdown=breakdown_4b,
         ),
         ModelOption(
             key="3",
             name="Gemma 3 12B IT (bf16)",
             size="12b",
             quantization=None,
-            description="Full precision, high quality",
-            vram_estimate=format_vram_estimate(breakdown_12b_bf16.total_gb),
-            vram_breakdown=breakdown_12b_bf16,
-        ),
-        ModelOption(
-            key="4",
-            name="Gemma 3 12B IT (int4)",
-            size="12b",
-            quantization="int4",
-            description="4-bit quantized, larger model",
-            vram_estimate=format_vram_estimate(breakdown_12b_int4.total_gb),
-            vram_breakdown=breakdown_12b_int4,
+            description="High quality, more VRAM",
+            vram_estimate=format_vram_estimate(breakdown_12b.total_gb),
+            vram_breakdown=breakdown_12b,
         ),
     ]
 
@@ -1828,7 +1851,7 @@ def display_model_selection_menu() -> ModelOption:
 
     # Prompt for selection
     prompt_icon = styled(ICONS["select"], BRAND_ACCENT)
-    prompt_text = styled("Enter choice (1-4):", Colors.WHITE)
+    prompt_text = styled("Enter choice (1-3):", Colors.WHITE)
 
     while True:
         try:
@@ -1848,7 +1871,7 @@ def display_model_selection_menu() -> ModelOption:
 
         # Invalid choice
         cross = styled(ICONS["cross"], BRAND_ERROR)
-        err_msg = styled("Invalid choice. Please enter 1, 2, 3, or 4.", BRAND_ERROR)
+        err_msg = styled("Invalid choice. Please enter 1, 2, or 3.", BRAND_ERROR)
         print(f"  {cross} {err_msg}")
 
 
@@ -1861,13 +1884,11 @@ def load_model(settings: Settings) -> GemmaWithSAE:
     """Load the GemmaWithSAE model with animated progress."""
     print(create_header(title="Loading Model Stack", subtitle="Initializing Gemma + SAE"))
 
-    # Get the correct model ID (QAT for int4, base for bf16)
+    # Get the correct model ID
     model_id = get_gemma_model_id(
         size=settings.gemma_model_size,
         model_type=settings.gemma_model_type,
-        quantization=settings.gemma_quantization,
     )
-    is_qat = settings.gemma_quantization == "int4"
 
     # Load base model
     with Spinner(message="Loading Gemma model") as spinner:
@@ -1875,9 +1896,7 @@ def load_model(settings: Settings) -> GemmaWithSAE:
             config = GemmaModelConfig(
                 model_id=model_id,
                 size=settings.gemma_model_size,
-                quantization=settings.gemma_quantization,
                 max_context_length=settings.gemma_max_context_length,
-                is_qat=is_qat,
                 tokenizer_id=settings.gemma_tokenizer_id,
             )
             model, tokenizer = load_gemma_model(config, token=settings.hf_token)
@@ -1991,9 +2010,12 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
     # Display question bank info
     total_qs = len(question_bank.questions)
-    malicious_qs = len(question_bank.filter(malicious=True))
-    safe_qs = len(question_bank.filter(malicious=False))
-    qs_info = f"Question bank: {total_qs} questions ({safe_qs} safe, {malicious_qs} malicious)"
+    refusal_qs = len(question_bank.filter(malicious=True))
+    non_refusal_qs = len(question_bank.filter(malicious=False))
+    qs_info = (
+        f"Question bank: {total_qs} questions ({non_refusal_qs} non-refusal, {refusal_qs} refusal)"
+    )
+
     print(f"  {styled(qs_info, Colors.DIM)}")
 
     display_commands_help()
@@ -2003,6 +2025,9 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     # Prompt styling
     prompt_icon = styled("›", BRAND_PRIMARY, Colors.BOLD)
     user_label = styled("You", BRAND_PRIMARY, Colors.BOLD)
+
+    # Track current question for context-aware document generation
+    current_question: Question | None = None
 
     while True:
         try:
@@ -2103,10 +2128,10 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             elif subcommand == "synthetic":
                 browser_state.category = "synthetic"
                 browser_state.page = 1
-            elif subcommand == "malicious":
+            elif subcommand == "refusal":
                 browser_state.malicious = True
                 browser_state.page = 1
-            elif subcommand == "safe":
+            elif subcommand == "non-refusal":
                 browser_state.malicious = False
                 browser_state.page = 1
             elif subcommand == "all":
@@ -2145,6 +2170,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
             display_question_detail(question=question)
             user_input = question.text
+            current_question = question  # Set for context-aware doc generation
             # Fall through to normal message processing
 
         # Random question
@@ -2154,9 +2180,9 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             category_filter: str | None = None
 
             for part in parts[1:]:
-                if part == "malicious":
+                if part == "refusal":
                     malicious_filter = True
-                elif part == "safe":
+                elif part == "non-refusal":
                     malicious_filter = False
                 elif part == "papers":
                     category_filter = "papers"
@@ -2175,10 +2201,10 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
             display_question_detail(question=question)
             user_input = question.text
+            current_question = question  # Set for context-aware doc generation
             # Fall through to normal message processing
 
-        # Count input tokens
-        input_tokens = count_tokens(model, user_input)
+        # Input token counting is now handled internally by GemmaWithSAE
 
         # Add user message to conversation
         conversation_state["messages"].append(HumanMessage(content=user_input))
@@ -2187,14 +2213,16 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
         try:
             trajectory = StreamingTrajectory()
             start_time = time.perf_counter()
-            output_tokens = 0
             # Collect all new messages from agent updates during streaming
             new_messages: list[BaseMessage] = []
 
             # Use streaming mode for real-time output (including custom events)
+            # Pass universe context if we have a question with one
+            universe_ctx = current_question.universe_context if current_question else None
             eval_context = EvaluationContext(
                 include_private_info=include_private_info,
                 generator_session=generator_session,
+                universe_context=universe_ctx,
             )
             for stream_mode, chunk in agent.stream(
                 conversation_state,
@@ -2211,7 +2239,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                     # Stream AI message tokens (works with API models)
                     if isinstance(token, AIMessageChunk) and token.content:
                         trajectory.stream_token(token=str(token.content))
-                        output_tokens += 1
+                        # output_tokens tracked by model wrapper
 
                 elif stream_mode == "custom":
                     # Handle custom stream events (e.g., from search_knowledge_base)
@@ -2231,7 +2259,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                                     # Capture final response content
                                     if msg.content and not msg.tool_calls:
                                         trajectory.final_response = str(msg.content)
-                                        output_tokens = count_tokens(model, str(msg.content))
+                                        # output_tokens tracked by model wrapper
                                     # Display tool calls
                                     if msg.tool_calls:
                                         for tc in msg.tool_calls:
@@ -2250,6 +2278,11 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                                         result=content,
                                     )
 
+            # Update token stats from model wrapper (source of truth)
+            stats.last_total_context_tokens = model.last_input_token_count
+            stats.total_input_tokens = model.total_input_tokens
+            stats.total_output_tokens = model.total_output_tokens
+
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             # Finish streaming display and show final response
@@ -2261,24 +2294,35 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
             # Update session stats
             stats.total_turns += 1
-            stats.total_input_tokens += input_tokens
-            stats.total_output_tokens += output_tokens
-            stats.total_tool_calls += len(trajectory.tool_calls_made)
+            # Note: total_input/output_tokens are already synced from model wrapper above
+
+            # Calculate turn tokens for history/summary
+            # Use context size as "input cost" for this turn
+            turn_input_tokens = model.last_input_token_count
+
+            # Calculate output tokens for this turn (approximate from final response)
+            turn_output_tokens = 0
+            if trajectory.final_response:
+                turn_output_tokens = count_tokens(model, trajectory.final_response)
+
             stats.total_latency_ms += latency_ms
             stats.agent_steps_history.append(trajectory.agent_steps)
             stats.latency_history.append(latency_ms)
-            stats.tokens_history.append((input_tokens, output_tokens))
+            stats.tokens_history.append((turn_input_tokens, turn_output_tokens))
 
             # Display summary
             trajectory.display_summary(
                 latency_ms=latency_ms,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                input_tokens=turn_input_tokens,
+                output_tokens=turn_output_tokens,
             )
 
             # Update conversation state by appending all new messages from this turn
             # We collected AIMessage and ToolMessage instances during streaming
             conversation_state["messages"].extend(new_messages)
+
+            # Reset current question after processing
+            current_question = None
 
         except Exception as e:
             cross = styled(ICONS["cross"], BRAND_ERROR)
