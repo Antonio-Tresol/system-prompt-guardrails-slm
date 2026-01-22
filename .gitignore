@@ -233,3 +233,5 @@ knowledge_base/vectordb/file_tracker.json
 data_generation/papers/2510.18234.pdf
 tests/audit_results_1.0.csv
 .gitignore
+.agent/
+gemmascope2_paper.md
