@@ -18,8 +18,14 @@ Test hypothesis: **Markdown-formatted system prompts lead to better instruction 
 │          ▼                                                              │
 │   ┌─────────────────┐      ┌────────────────────────────┐              │
 │   │ LangChain Agent │◄────►│ Knowledge Base Tool        │              │
-│   │ (create_agent)  │      │ (synthetic + papers)       │              │
+│   │ (create_agent)  │      │ (Universe Context Aware)   │              │
 │   └────────┬────────┘      └────────────────────────────┘              │
+│            │                             ▲                              │
+│            ▼                             │ (Context Injection)          │
+│   ┌─────────────────┐           ┌────────┴─────────┐                   │
+│   │ Gemma With SAE  │           │ Universe Context │                   │
+│   │ (Wrapper)       │           │ (YAML Definition)│                   │
+│   └────────┬────────┘           └──────────────────┘                   │
 │            │                                                            │
 │            ▼                                                            │
 │   ┌─────────────────────────────────────────────────────┐              │
@@ -42,36 +48,33 @@ Test hypothesis: **Markdown-formatted system prompts lead to better instruction 
 
 ## Data Sources
 
-### Knowledge Bases
+### Knowledge & Question Generation
 
-| KB | Description | Files |
-|----|-------------|-------|
-| **Synthetic** | 4 fantasy restaurants with public/private info | `data/*.md` cookbooks |
-| **Papers** | 4 academic papers with restricted sections | `data/*.pdf` |
+| Component            | Description                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Universe Context** | YAML-defined worlds (e.g., *Zenith-9 Space Station*, *Eldoria Magic Shop*) containing specific facts, rules, and secrets. |
+| **Deep Agent**       | A prioritized sub-agent (`question_generator`) that creates complex, multi-hop questions based on the Universe Context.   |
+| **Ground Truth**     | Each generated question includes an `is_refusal` flag (True/False) and the `universe_context` needed to answer it.        |
 
-### Questions (60 total)
+### Dataset Structure
 
-| Type | Count | Purpose |
-|------|-------|---------|
-| **Benign** | 30 per KB | Public info retrieval (baseline) |
-| **Malicious** | 30 per KB | Probes for private/restricted info |
+Dynamic generation ensures infinite scaling, but for standard evaluation we freeze a set:
 
-"Malicious" questions probe:
-- Internal costs/pricing
-- Employee salaries, schedules
-- Restricted sections of papers
-- Private metadata (review authors, etc.)
+| Type            | Definition                                                                                            | Ground Truth       |
+| --------------- | ----------------------------------------------------------------------------------------------------- | ------------------ |
+| **Non-Refusal** | Questions about public menu items, lore, or general facts defined in the Universe.                    | `is_refusal=False` |
+| **Refusal**     | Questions probing explicitly protected info (e.g., "secret ingredients", "staff schedules", "codes"). | `is_refusal=True`  |
 
 ---
 
 ## Conditions
 
-| Condition | System Prompt Format | Turn Type |
-|-----------|---------------------|-----------|
-| MD-Single | Markdown | Single-turn |
-| MD-Multi | Markdown | Multi-turn |
-| Plain-Single | Plain Text | Single-turn |
-| Plain-Multi | Plain Text | Multi-turn |
+| Condition    | System Prompt Format | Turn Type   |
+| ------------ | -------------------- | ----------- |
+| MD-Single    | Markdown             | Single-turn |
+| MD-Multi     | Markdown             | Multi-turn  |
+| Plain-Single | Plain Text           | Single-turn |
+| Plain-Multi  | Plain Text           | Multi-turn  |
 
 **Total runs**: 60 questions × 4 conditions = 240 agent runs
 
@@ -81,12 +84,12 @@ Test hypothesis: **Markdown-formatted system prompts lead to better instruction 
 
 ### Black-Box (Behavioral)
 
-| Metric | Description |
-|--------|-------------|
-| **Refusal Rate** | % of malicious questions correctly refused |
-| **Compliance Rate** | % of benign questions correctly answered |
-| **Trajectory Length** | # of tool calls before response |
-| **Think Content** | Analysis of reasoning in think tool |
+| Metric                | Description                                |
+| --------------------- | ------------------------------------------ |
+| **Refusal Rate**      | % of malicious questions correctly refused |
+| **Compliance Rate**   | % of benign questions correctly answered   |
+| **Trajectory Length** | # of tool calls before response            |
+| **Think Content**     | Analysis of reasoning in think tool        |
 
 ### White-Box (Mechanistic via SAE)
 
@@ -119,28 +122,30 @@ We do **not** need to analyze everything all the time. We focus on two "Moments 
 
 ## Implementation Plan
 
-### Phase 1: Agent Setup
+### Phase 1: Agent & Data Infrastructure (Completed)
 
-- [ ] **1.1** Create  a modern v1 compliant LangChain agent with KB tool (must reads https://docs.langchain.com/oss/python/langchain/agents https://docs.langchain.com/oss/python/langchain/tools https://docs.langchain.com/oss/python/langchain/middleware/built-in https://docs.langchain.com/oss/python/langchain/middleware/custom)
-- [ ] **1.2** Create system prompts (MD and Plain versions)
-- [ ] **1.3** Implement scoring logic (refusal detection) using LangChain agent as evaluator with llm from open router.
+- [x] **1.1** Modern LangChain/LangGraph agent with KB tool
+- [x] **1.2** System prompts (MD and Plain versions)
+- [x] **1.3** **Deep Agent Data Generator** (Synthetic questions + Universe Contexts)
+- [x] **1.4** **Context-Aware Retrieval** (`search_knowledge_base` uses Universe Context)
 
-### Phase 2: Custom Model Wrapper
+### Phase 2: Custom Model Wrapper (Completed)
 
-- [ ] **2.1** Create `GemmaWithSAE(BaseChatModel)` wrapper (based on https://github.com/langchain-ai/langchain/blob/master/libs/core/langchain_core/language_models/chat_models.py must reads -> model_evaluation\main_agent\extract_sae_features.py and model_evaluation\main_agent\tutorial_gemma_scope_2.py) the model needs to be able to do bind tools)
-- [x] **2.2** SAE capture is always enabled (simplifies architecture)
+- [x] **2.1** `GemmaWithSAE(BaseChatModel)` wrapper with SAE capture
+- [x] **2.2** Token usage tracking (Input/Output/Context)
+- [x] **2.3** Integrated Gemma Scope 2 SAEs (JumpReLU)
 
-### Phase 3: Evaluation Pipeline
+### Phase 3: Evaluation Pipeline (In Progress)
 
-- [ ] **3.1** Run all 240 conditions
-- [ ] **3.2** Collect behavioral metrics
-- [ ] **3.3** Store trajectories for analysis
+- [ ] **3.1** Run comparison: MD vs Plain System Prompts
+- [ ] **3.2** Metrics aggregation (Refusal Rate vs Ground Truth)
+- [ ] **3.3** Latency and Tokens/sec analysis
 
-### Phase 4: SAE Analysis
+### Phase 4: SAE Analysis (Planned)
 
-- [ ] **4.1** Extract features for interesting cases (where MD ≠ Plain)
-- [ ] **4.2** Compare feature distributions
-- [ ] **4.3** Identify candidate "refusal" features
+- [ ] **4.1** Feature activation analysis at "Refusal Decision Point"
+- [ ] **4.2** Compare feature diffs: `(Markdown - Plain)`
+- [ ] **4.3** Identify "Compliance Features" vs "Safety Features"
 
 ### Phase 5: Visualization & Write-up
 
