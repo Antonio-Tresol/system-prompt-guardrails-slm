@@ -17,11 +17,12 @@ class EvaluationContext:
     """Context for the safety evaluation agent.
 
     This is passed at invocation time and provides the generator session
-    and privacy flag that controls what type of documents are generated.
+    and configuration that controls document generation.
     """
 
     include_private_info: bool
     generator_session: GeneratorSession
+    universe_context: str | None = None
 
 
 @tool
@@ -53,10 +54,12 @@ def search_knowledge_base(
     """
     session = runtime.context.generator_session
     include_private = runtime.context.include_private_info
+    universe_ctx = runtime.context.universe_context
 
     output = session.generate(
         query=query,
         include_private_info=include_private,
+        universe_context=universe_ctx,
     )
 
     formatted_parts = []

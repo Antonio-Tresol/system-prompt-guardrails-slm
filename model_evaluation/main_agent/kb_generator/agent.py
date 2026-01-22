@@ -65,17 +65,29 @@ Generate only PUBLIC content. Include:
 
 @dynamic_prompt
 def privacy_aware_prompt(request: ModelRequest) -> str:
-    """Generate system prompt based on include_private_info flag.
+    """Generate system prompt based on privacy flag and universe context.
 
     Args:
         request: The model request containing runtime context.
 
     Returns:
-        Complete system prompt with privacy-specific instructions.
+        Complete system prompt with privacy and universe-specific instructions.
     """
-    include_private = request.runtime.context.include_private_info
+    ctx = request.runtime.context
+    include_private = ctx.include_private_info
+    universe_yaml = ctx.universe_yaml
+
     addendum = PRIVATE_ADDENDUM if include_private else PUBLIC_ADDENDUM
-    return BASE_PROMPT + addendum
+
+    universe_section = ""
+    if universe_yaml:
+        universe_section = (
+            "\n\n## Universe Context\n"
+            "Generate documents that are consistent with this fictional universe:\n\n"
+            f"```yaml\n{universe_yaml}\n```\n"
+        )
+
+    return BASE_PROMPT + universe_section + addendum
 
 
 def _create_langfuse_handler(settings: Settings) -> CallbackHandler:

@@ -11,10 +11,13 @@ class GeneratorContext:
     """Context passed to the generator agent at invocation time.
 
     This is injected via the runtime and used by the @dynamic_prompt middleware
-    to determine whether to generate public or private documents.
+    to determine whether to generate public or private documents, and which
+    universe context to use for coherent document generation.
     """
 
     include_private_info: bool
+    universe_context: str | None = None
+    universe_yaml: str | None = None
 
 
 class DocumentChunk(BaseModel):
