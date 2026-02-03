@@ -29,8 +29,10 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr
 
 from model_evaluation.main_agent.gemma_scope_sae import (
+    MultiLayerSAEFeatureResult,
     SAEConfig,
     SAEFeatureResult,
+    extract_multi_layer_sae_features,
     extract_sae_features,
 )
 
@@ -48,8 +50,12 @@ class GemmaWithSAE(BaseChatModel):
     _tokenizer: Any = PrivateAttr()
     _sae: Any = PrivateAttr()
     _sae_config: SAEConfig = PrivateAttr()
+    _all_saes: Dict[int, Tuple[Any, SAEConfig]] = PrivateAttr(default_factory=dict)
     _bound_tools: List[Dict[str, Any]] = PrivateAttr(default_factory=list)
     _last_activations: Optional[SAEFeatureResult] = PrivateAttr(default=None)
+    _last_multi_layer_activations: Optional[MultiLayerSAEFeatureResult] = PrivateAttr(
+        default=None,
+    )
     _last_input_token_count: int = PrivateAttr(default=0)
     _total_input_tokens: int = PrivateAttr(default=0)
     _total_output_tokens: int = PrivateAttr(default=0)
@@ -64,6 +70,7 @@ class GemmaWithSAE(BaseChatModel):
         tokenizer: Any,  # noqa: ANN401
         sae: Any,  # noqa: ANN401
         sae_config: SAEConfig,
+        additional_saes: Dict[int, Tuple[Any, SAEConfig]] | None = None,
         max_tokens: int = 512,
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
@@ -73,7 +80,10 @@ class GemmaWithSAE(BaseChatModel):
             model: Loaded HuggingFace model (4B, 12B, quantized or full).
             tokenizer: Loaded HuggingFace tokenizer.
             sae: Loaded JumpReLUSAE.
-            sae_config: Configuration for the SAE.
+            sae_config: Configuration for the SAE (primary layer).
+            additional_saes: Extra SAEs for multi-layer capture, mapping
+                layer index to (SAE, SAEConfig) pairs. When provided,
+                _generate uses extract_multi_layer_sae_features instead.
             max_tokens: Maximum tokens to generate.
             kwargs: Additional arguments for BaseChatModel.
         """
@@ -83,6 +93,11 @@ class GemmaWithSAE(BaseChatModel):
         self._sae = sae
         self._sae_config = sae_config
 
+        all_saes: Dict[int, Tuple[Any, SAEConfig]] = {sae_config.layer: (sae, sae_config)}
+        if additional_saes:
+            all_saes.update(additional_saes)
+        self._all_saes = all_saes if len(all_saes) > 1 else {}
+
     @property
     def _llm_type(self) -> str:
         """Return the type of LLM."""
@@ -90,8 +105,13 @@ class GemmaWithSAE(BaseChatModel):
 
     @property
     def last_activations(self) -> Optional[SAEFeatureResult]:
-        """Access the most recent SAE activations."""
+        """Access the most recent SAE activations (primary layer)."""
         return self._last_activations
+
+    @property
+    def last_multi_layer_activations(self) -> Optional[MultiLayerSAEFeatureResult]:
+        """Access the most recent multi-layer SAE activations."""
+        return self._last_multi_layer_activations
 
     @property
     def last_input_token_count(self) -> int:
@@ -159,20 +179,31 @@ class GemmaWithSAE(BaseChatModel):
         self._last_input_token_count = input_count
         self._total_input_tokens += input_count
 
-        result = extract_sae_features(
-            model=self._model,
-            tokenizer=self._tokenizer,
-            sae=self._sae,
-            sae_config=self._sae_config,
-            text=prompt,
-            max_new_tokens=self.max_tokens,
-        )
-        self._last_activations = result
-        output_text = result.answer
-
-        # Update output token stats
-        # Use exact generated length (avoid re-encoding overhead and BOS inflation)
-        output_count = len(result.tokens) - result.prompt_len
+        if self._all_saes:
+            multi_result = extract_multi_layer_sae_features(
+                model=self._model,
+                tokenizer=self._tokenizer,
+                saes=self._all_saes,
+                text=prompt,
+                max_new_tokens=self.max_tokens,
+            )
+            self._last_multi_layer_activations = multi_result
+            self._last_activations = multi_result.layer_results[self._sae_config.layer]
+            output_text = multi_result.answer
+            output_count = len(multi_result.tokens) - multi_result.prompt_len
+        else:
+            result = extract_sae_features(
+                model=self._model,
+                tokenizer=self._tokenizer,
+                sae=self._sae,
+                sae_config=self._sae_config,
+                text=prompt,
+                max_new_tokens=self.max_tokens,
+            )
+            self._last_activations = result
+            self._last_multi_layer_activations = None
+            output_text = result.answer
+            output_count = len(result.tokens) - result.prompt_len
         self._total_output_tokens += output_count
 
         content, tool_calls = self._parse_tool_calls(output_text)

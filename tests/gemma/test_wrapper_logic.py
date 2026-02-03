@@ -29,7 +29,15 @@ class TestGemmaWrapper(unittest.TestCase):
         self.mock_model = MagicMock()
         self.mock_tokenizer = MagicMock()
         self.mock_sae = MagicMock()
-        self.mock_sae_config = MagicMock(spec=SAEConfig)
+        self.mock_sae_config = SAEConfig(
+            model_size="4b",
+            model_type="it",
+            layer=22,
+            width="16k",
+            l0_size="medium",
+            d_in=2048,
+            d_sae=16384,
+        )
 
         # Setup tokenizer mock behavior
         self.mock_tokenizer.apply_chat_template.return_value = "formatted_prompt"
