@@ -49,6 +49,7 @@ generate_corpus = "data_generation.generate_data:main"
 generate_questions = "model_evaluation.question_generator.cli:main"
 build_knowledge_base = "knowledge_base.main:main"
 mi_sml_agent = "model_evaluation.chat:main"
+run_evaluation = "model_evaluation.evaluation.cli:main"
 
 [tool.uv]
 package = true
