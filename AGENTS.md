@@ -1,6 +1,48 @@
-# Agent Instructions
+# Safety Prompts for SLM
 
-## Quality Standards (apply to to python files as well as to notebooks)
+This project tests the hypothesis that **Markdown-formatted system prompts lead to better instruction following** for refusing to reveal private information in RAG small language model based agents.
+
+## Project Overview
+
+See @../research_design.md for the full research design and experiment overview.
+See @../pyproject.toml for available dependencies and project configuration.
+
+## Tech Stack
+
+- **Python 3.12+** with `uv` as the package manager
+- **LangChain / LangGraph** for agent orchestration
+- **Langfuse** for observability and tracing
+- **ChromaDB** for vector storage
+- **Transformers / PyTorch** for model inference
+- **Gemma Scope 2 SAEs** for interpretability analysis
+
+## Common Commands
+
+```bash
+# Install dependencies
+uv sync
+
+# Run linting with auto-fix
+uv run ruff check --fix .
+
+# Auto-format and sort imports
+uv run ruff format .
+
+# Run tests
+uv run pytest
+```
+
+## Skills
+
+Skills are defined in `.claude/skills/` and can be invoked with `/skill-name`:
+
+- `/building-agents-with-modern-langchain` - Guide for building LangChain agents with LangGraph
+- `/gemma-2-scope` - Gemma Scope 2 SAE feature extraction and analysis
+- `/convert-py-to-notebook` - Converting Python scripts to Jupyter notebooks
+
+---
+
+## Quality Standards
 
 Think with the best SWE practices in mind, for python and for notebooks.
 
@@ -18,7 +60,7 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-### 4. Run Tests to Ensure Functionality and Integrity
+### 3. Run Tests to Ensure Functionality and Integrity
 
 ```bash
 uv run pytest

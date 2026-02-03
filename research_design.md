@@ -2,7 +2,7 @@
 
 ## Goal
 
-Test hypothesis: **Markdown-formatted system prompts lead to better instruction following** for refusing to reveal private information in RAG small language model based agents.
+Test hypothesis: **Markdown-formatted system prompts lead to better instruction following in gemma 3 family of small language models when used as agents** for refusing to reveal private information in RAG.
 
 ---
 
@@ -98,25 +98,30 @@ Dynamic generation ensures infinite scaling, but for standard evaluation we free
 We do **not** need to analyze everything all the time. We focus on two "Moments of Truth":
 
 #### 1. The Input Processing Moment
+
 *When the model reads the system prompt.*
-*   **Metric: Syntax Token Activation** (Core)
-    *   *Question:* Does the model actually "see" the markdown syntax?
-    *   *What to measure:* Sum of feature activations on `**`, `#`, and bullet points.
-*   **Metric: Feature Specificity** (Secondary)
-    *   *Question:* Are there special features just for markdown syntax?
+
+* **Metric: Syntax Token Activation** (Core)
+  * *Question:* Does the model actually "see" the markdown syntax?
+  * *What to measure:* Sum of feature activations on `**`, `#`, and bullet points.
+* **Metric: Feature Specificity** (Secondary)
+  * *Question:* Are there special features just for markdown syntax?
 
 #### 2. The Decision Moment
+
 *When the model generates the first token of the response (or thought).*
-*   **Metric: Refusal Features** (Core)
-    *   *Question:* Which features predict a refusal?
-    *   *What to measure:* Activations at the last prompt token (position -1).
-*   **Metric: Feature Diff** (Core)
-    *   *Question:* What internal concept is active in Markdown but missing in Plain Text?
-    *   *What to measure:* `(Markdown_Acts - Plain_Acts)` at the decision moment.
+
+* **Metric: Refusal Features** (Core)
+  * *Question:* Which features predict a refusal?
+  * *What to measure:* Activations at the last prompt token (position -1).
+* **Metric: Feature Diff** (Core)
+  * *Question:* What internal concept is active in Markdown but missing in Plain Text?
+  * *What to measure:* `(Markdown_Acts - Plain_Acts)` at the decision moment.
 
 #### 3. Quality Checks (Ignore for analysis)
-*   **L0 / FVU**: Just checks if the SAE is broken.
-*   **Top-K Features**: Too noisy for aggregate analysis, use only for debugging specific interesting cases.
+
+* **L0 / FVU**: Just checks if the SAE is broken.
+* **Top-K Features**: Too noisy for aggregate analysis, use only for debugging specific interesting cases.
 
 ---
 
@@ -124,34 +129,34 @@ We do **not** need to analyze everything all the time. We focus on two "Moments 
 
 ### Phase 1: Agent & Data Infrastructure (Completed)
 
-- [x] **1.1** Modern LangChain/LangGraph agent with KB tool
-- [x] **1.2** System prompts (MD and Plain versions)
-- [x] **1.3** **Deep Agent Data Generator** (Synthetic questions + Universe Contexts)
-- [x] **1.4** **Context-Aware Retrieval** (`search_knowledge_base` uses Universe Context)
+* [x] **1.1** Modern LangChain/LangGraph agent with KB tool
+* [x] **1.2** System prompts (MD and Plain versions)
+* [x] **1.3** **Deep Agent Data Generator** (Synthetic questions + Universe Contexts)
+* [x] **1.4** **Context-Aware Retrieval** (`search_knowledge_base` uses Universe Context)
 
 ### Phase 2: Custom Model Wrapper (Completed)
 
-- [x] **2.1** `GemmaWithSAE(BaseChatModel)` wrapper with SAE capture
-- [x] **2.2** Token usage tracking (Input/Output/Context)
-- [x] **2.3** Integrated Gemma Scope 2 SAEs (JumpReLU)
+* [x] **2.1** `GemmaWithSAE(BaseChatModel)` wrapper with SAE capture
+* [x] **2.2** Token usage tracking (Input/Output/Context)
+* [x] **2.3** Integrated Gemma Scope 2 SAEs (JumpReLU)
 
 ### Phase 3: Evaluation Pipeline (In Progress)
 
-- [ ] **3.1** Run comparison: MD vs Plain System Prompts
-- [ ] **3.2** Metrics aggregation (Refusal Rate vs Ground Truth)
-- [ ] **3.3** Latency and Tokens/sec analysis
+* [ ] **3.1** Run comparison: MD vs Plain System Prompts
+* [ ] **3.2** Metrics aggregation (Refusal Rate vs Ground Truth)
+* [ ] **3.3** Latency and Tokens/sec analysis
 
 ### Phase 4: SAE Analysis (Planned)
 
-- [ ] **4.1** Feature activation analysis at "Refusal Decision Point"
-- [ ] **4.2** Compare feature diffs: `(Markdown - Plain)`
-- [ ] **4.3** Identify "Compliance Features" vs "Safety Features"
+* [ ] **4.1** Feature activation analysis at "Refusal Decision Point"
+* [ ] **4.2** Compare feature diffs: `(Markdown - Plain)`
+* [ ] **4.3** Identify "Compliance Features" vs "Safety Features"
 
 ### Phase 5: Visualization & Write-up
 
-- [ ] **5.1** Create comparison plots
-- [ ] **5.2** Feature analysis tables
-- [ ] **5.3** Paper sections
+* [ ] **5.1** Create comparison plots
+* [ ] **5.2** Feature analysis tables
+* [ ] **5.3** Paper sections
 
 ---
 
@@ -160,27 +165,27 @@ We do **not** need to analyze everything all the time. We focus on two "Moments 
 ### Q1: When to capture SAE activations?
 
 **Options:**
-- (a) Every run → Slow, lots of data
-- (b) Only on interesting cases → Post-hoc, after finding MD/Plain differences
-- (c) At decision points only → Capture right before first answer token
+* (a) Every run → Slow, lots of data
+* (b) Only on interesting cases → Post-hoc, after finding MD/Plain differences
+* (c) At decision points only → Capture right before first answer token
 
 **Decision:** [ TBD ]
 
 ### Q2: How to detect refusal?
 
 **Options:**
-- (a) Keyword matching ("I cannot", "I'm not able")
-- (b) LLM-as-judge (separate model scores refusal)
-- (c) Binary classification model
+* (a) Keyword matching ("I cannot", "I'm not able")
+* (b) LLM-as-judge (separate model scores refusal)
+* (c) Binary classification model
 
 **Decision:** [ TBD ]
 
 ### Q3: Which SAE layer/width?
 
 **Options from Gemma Scope 2 12B:**
-- Layers: 12 (25%), 24 (50%), 31 (65%), 41 (85%)
-- Widths: 16k, 64k, 256k, 1m
-- L0: small (~10), medium (~60), big (~100)
+* Layers: 12 (25%), 24 (50%), 31 (65%), 41 (85%)
+* Widths: 16k, 64k, 256k, 1m
+* L0: small (~10), medium (~60), big (~100)
 
 **Recommendation:** Layer 41 (late = abstract), 16k width, medium L0
 
@@ -239,7 +244,7 @@ class GemmaWithSAE(BaseChatModel):
 
 ## References
 
-- [Gemma Scope 2 Paper](gemmascope2_paper.md) - local copy
-- [Gemma Scope 2 HuggingFace](https://huggingface.co/google/gemma-scope-2-12b-it)
-- [LangChain create_agent](https://python.langchain.com/docs/modules/agents/)
-- [Neuronpedia](https://neuronpedia.org) - Feature visualization
+* [Gemma Scope 2 Paper](gemmascope2_paper.md) - local copy
+* [Gemma Scope 2 HuggingFace](https://huggingface.co/google/gemma-scope-2-12b-it)
+* [LangChain create_agent](https://python.langchain.com/docs/modules/agents/)
+* [Neuronpedia](https://neuronpedia.org) - Feature visualization
