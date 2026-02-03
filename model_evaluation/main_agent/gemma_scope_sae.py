@@ -138,6 +138,26 @@ RECOMMENDED_LAYERS = {
 }
 
 
+EVALUATION_LAYERS: dict[str, tuple[int, int]] = {
+    "1b": (13, 22),  # middle (~50%), upper (~85%)
+    "4b": (17, 29),
+    "12b": (24, 41),
+    "27b": (31, 53),
+}
+
+
+def get_evaluation_layers(*, model_size: str) -> tuple[int, int]:
+    """Return (middle_layer, upper_layer) for evaluation capture.
+
+    Args:
+        model_size: Gemma model size (1b, 4b, 12b, 27b).
+
+    Returns:
+        Tuple of (middle_layer, upper_layer) indices.
+    """
+    return EVALUATION_LAYERS[model_size]
+
+
 @dataclass
 class SAEConfig:
     """Configuration for a loaded SAE.
@@ -184,6 +204,23 @@ class SAEFeatureResult:
     top_activations: torch.Tensor
     l0: float
     fvu: float
+
+
+@dataclass
+class MultiLayerSAEFeatureResult:
+    """Container for multi-layer SAE feature extraction results.
+
+    Attributes:
+        layer_results: Mapping from layer index to per-layer SAEFeatureResult.
+        answer: The generated answer text (shared across all layers).
+        tokens: List of decoded tokens (shared across all layers).
+        prompt_len: Number of tokens in the prompt.
+    """
+
+    layer_results: dict[int, SAEFeatureResult]
+    answer: str
+    tokens: list[str]
+    prompt_len: int
 
 
 def load_gemma_scope_sae(
@@ -646,3 +683,122 @@ def visualize_top_features_per_token(
 
     html_output = "".join(html_parts)
     display(HTML(html_output))
+
+
+def gather_multi_layer_residual_activations(
+    *,
+    model: PreTrainedModel,
+    target_layers: list[int],
+    input_ids: torch.Tensor,
+) -> dict[int, torch.Tensor]:
+    """Gather residual stream activations at multiple layers in one forward pass.
+
+    Args:
+        model: The Gemma model.
+        target_layers: Layer indices to gather activations from.
+        input_ids: Tokenized input, shape (1, seq_len).
+
+    Returns:
+        Dictionary mapping layer index to activations tensor (seq_len, d_model).
+    """
+    cache: dict[str, torch.Tensor] = {}
+    handles: list[torch.utils.hooks.RemovableHook] = []
+
+    layers = _get_model_layers(model)
+    for layer_idx in target_layers:
+        key = f"resid_post_layer_{layer_idx}"
+        handle = layers[layer_idx].register_forward_hook(
+            partial(_gather_acts_hook, cache=cache, key=key),
+        )
+        handles.append(handle)
+
+    try:
+        with torch.inference_mode():
+            _ = model(input_ids)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    return {layer_idx: cache[f"resid_post_layer_{layer_idx}"] for layer_idx in target_layers}
+
+
+def extract_multi_layer_sae_features(
+    *,
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    saes: dict[int, tuple[JumpReLUSAE, SAEConfig]],
+    text: str,
+    max_new_tokens: int = 100,
+    top_k: int = 10,
+) -> MultiLayerSAEFeatureResult:
+    """Extract SAE features at multiple layers with shared generation.
+
+    Generates text once, runs one forward pass with hooks on all target layers,
+    and encodes through each layer's SAE independently.
+
+    Args:
+        model: The Gemma model.
+        tokenizer: The tokenizer.
+        saes: Mapping from layer index to (SAE, SAEConfig) pairs.
+        text: Input text/prompt.
+        max_new_tokens: Maximum tokens to generate.
+        top_k: Number of top features to track per position.
+
+    Returns:
+        MultiLayerSAEFeatureResult with per-layer results sharing the same generation.
+    """
+    device = next(model.parameters()).device
+    inputs = tokenizer(text, return_tensors="pt").to(device)
+
+    with torch.inference_mode():
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+        )
+
+    prompt_len = inputs.input_ids.shape[-1]
+    answer_ids = generated_ids[0][prompt_len:]
+    answer = tokenizer.decode(answer_ids, skip_special_tokens=True)
+    all_tokens = tokenizer.convert_ids_to_tokens(generated_ids[0])
+
+    all_residuals = gather_multi_layer_residual_activations(
+        model=model,
+        target_layers=list(saes.keys()),
+        input_ids=generated_ids,
+    )
+
+    layer_results: dict[int, SAEFeatureResult] = {}
+    for layer_idx, (sae, _sae_config) in saes.items():
+        residual_acts = all_residuals[layer_idx]
+
+        with torch.inference_mode():
+            feature_acts = sae.encode(residual_acts.to(torch.float32))
+            recon = sae.decode(feature_acts)
+
+        l0 = (feature_acts[1:] > 0).float().sum(-1).mean().item()
+
+        mse = torch.mean((recon[1:] - residual_acts[1:].float()) ** 2)
+        var = residual_acts[1:].float().var()
+        fvu = (mse / var).item() if var > 0 else 0.0
+
+        top_acts, top_feats = feature_acts.topk(k=top_k, dim=-1)
+
+        layer_results[layer_idx] = SAEFeatureResult(
+            feature_acts=feature_acts,
+            tokens=all_tokens,
+            answer=answer,
+            prompt_len=prompt_len,
+            top_features=top_feats,
+            top_activations=top_acts,
+            l0=l0,
+            fvu=fvu,
+        )
+
+    return MultiLayerSAEFeatureResult(
+        layer_results=layer_results,
+        answer=answer,
+        tokens=all_tokens,
+        prompt_len=prompt_len,
+    )
