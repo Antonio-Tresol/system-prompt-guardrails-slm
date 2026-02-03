@@ -46,17 +46,23 @@ safety-prompts-for-slm/
 ├── model_evaluation/           # Model evaluation and RAG agent
 │   ├── chat.py                # Terminal chat interface: `uv run mi_sml_agent`
 │   ├── config.py              # Settings (Gemma, SAE, API keys)
-│   └── main_agent/            # Core agent implementation
-│       ├── gemma_wrapper.py   # GemmaWithSAE (BaseChatModel wrapper)
-│       ├── gemma_scope_sae.py # JumpReLUSAE loading and feature extraction
-│       ├── gemma_model_loader.py # Model loading with quantization
-│       ├── rag_agent.py       # Safety evaluation agent (MD/Plain prompts)
-│       ├── tools.py           # search_knowledge_base & think tools
-│       └── kb_generator/      # Dynamic knowledge base generation
-│           ├── agent.py       # KB generator agent
-│           ├── schemas.py     # DocumentChunk, GeneratorOutput models
-│           ├── session.py     # GeneratorSession (stateful generation)
-│           └── tools.py       # Agent tools
+│   ├── main_agent/            # Core agent implementation
+│   │   ├── gemma_wrapper.py   # GemmaWithSAE (BaseChatModel wrapper)
+│   │   ├── gemma_scope_sae.py # JumpReLUSAE loading and feature extraction
+│   │   ├── gemma_model_loader.py # Model loading with quantization
+│   │   ├── rag_agent.py       # Safety evaluation agent (MD/Plain prompts)
+│   │   ├── tools.py           # search_knowledge_base & think tools
+│   │   └── kb_generator/      # Dynamic knowledge base generation
+│   │       ├── agent.py       # KB generator agent
+│   │       ├── schemas.py     # DocumentChunk, GeneratorOutput models
+│   │       ├── session.py     # GeneratorSession (stateful generation)
+│   │       └── tools.py       # Agent tools
+│   └── evaluation/            # Evaluation pipeline
+│       ├── cli.py             # CLI: `uv run run_evaluation`
+│       ├── runner.py          # Core evaluation loop
+│       ├── schemas.py         # QuestionRow, RunResult models
+│       ├── kb_cache.py        # Deterministic KB caching
+│       └── analysis.ipynb     # Results analysis notebook
 │
 ├── utils/                     # Shared utilities
 │   └── logging.py             # Loguru logging configuration
@@ -104,6 +110,7 @@ uv run pytest
 | `uv run generate_corpus` | `data_generation.generate_data:main` | Generate synthetic restaurant cookbooks |
 | `uv run generate_questions` | `data_generation.question_generator.cli:main` | Generate evaluation questions from universe contexts |
 | `uv run mi_sml_agent` | `model_evaluation.chat:main` | Interactive terminal chat with the safety agent |
+| `uv run run_evaluation` | `model_evaluation.evaluation.cli:main` | Run MD vs Plain evaluation pipeline |
 | `uv run langgraph dev` | LangGraph CLI | Launch LangGraph Studio for visual debugging |
 
 ## Environment Variables
@@ -154,6 +161,49 @@ Copy `.env.example` to `.env` and fill in:
 - `GeneratorSession` (`kb_generator/session.py`): Stateful KB generation across queries
 - `EvaluationContext` (`tools.py`): Runtime context (privacy flag, session, universe context)
 - `DocumentChunk` (`kb_generator/schemas.py`): Structured KB output with privacy metadata
+
+## Evaluation Pipeline
+
+### Running the Evaluation
+
+```bash
+# Run evaluation (generates results/ directory)
+uv run run_evaluation --model-size 4b
+
+# Options
+uv run run_evaluation --model-size 12b --questions path/to/questions.csv --output-dir results/ --resume
+```
+
+### Analyzing Results
+
+Open the analysis notebook after running the evaluation:
+
+```bash
+jupyter notebook model_evaluation/evaluation/analysis.ipynb
+```
+
+The notebook reads from `results/` (configurable via `RESULTS_DIR`) and covers:
+- Refusal & compliance rates (MD vs Plain)
+- Behavioral breakdown by universe context
+- Trajectory analysis (steps, tool calls)
+- Token usage & duration
+- SAE quality checks (L0, FVU)
+- Decision-point feature analysis per layer
+- Feature diffs (MD-specific vs Plain-specific features)
+- Per-token feature visualization
+- Trace deep-dives
+
+### Evaluation Output Structure
+
+```
+results/
+├── results.csv              # 120 rows (60 questions x 2 formats)
+├── kb_cache.json            # Pre-generated KB content
+├── traces/                  # Agent trajectory JSONs
+│   └── trace_{uuid}.json
+└── sae_features/            # SAE activations per run per layer
+    └── q{id}_{format}_layer{N}.npz
+```
 
 ## Skills
 
