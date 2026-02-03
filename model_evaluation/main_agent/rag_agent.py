@@ -9,17 +9,18 @@ It integrates:
 5. Langfuse tracing for observability
 """
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
+import yaml
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from langgraph.graph.state import CompiledStateGraph
 
 from model_evaluation.config import Settings
-import yaml
-from pathlib import Path
-
 from model_evaluation.main_agent.gemma_scope_sae import load_gemma_scope_sae
 from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
 from model_evaluation.main_agent.tools import (
@@ -28,7 +29,6 @@ from model_evaluation.main_agent.tools import (
     think,
 )
 
-# Path to universe context YAML files
 UNIVERSE_CONTEXTS_DIR = (
     Path(__file__).parent.parent.parent / "data_generation" / "universe_contexts"
 )
@@ -129,6 +129,7 @@ def create_safety_agent(
     model: GemmaWithSAE,
     *,
     use_markdown_rules: bool = True,
+    middleware: Sequence[AgentMiddleware[Any, Any]] = (),
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create the Safety Evaluation Agent using LangGraph with GemmaWithSAE.
 
@@ -141,6 +142,7 @@ def create_safety_agent(
     Args:
         model: The configured GemmaWithSAE model instance with SAE hooks.
         use_markdown_rules: If True, uses Markdown system prompt; else Plain Text.
+        middleware: Optional sequence of middleware to attach to the agent.
 
     Returns:
         A compiled LangGraph application (Runnable).
@@ -153,6 +155,7 @@ def create_safety_agent(
         tools,
         system_prompt=system_prompt,
         context_schema=EvaluationContext,
+        middleware=middleware,
     )
 
     return app
@@ -178,13 +181,16 @@ def _create_langfuse_handler(settings: Settings) -> CallbackHandler:
 
 def create_safety_agent_with_tracing(
     model: GemmaWithSAE,
+    *,
     use_markdown_rules: bool = True,
+    middleware: Sequence[AgentMiddleware[Any, Any]] = (),
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create a Safety Agent with GemmaWithSAE and Langfuse tracing.
 
     Args:
         model: The configured GemmaWithSAE model instance.
         use_markdown_rules: If True, uses Markdown system prompt; else Plain Text.
+        middleware: Optional sequence of middleware to attach to the agent.
 
     Returns:
         A Safety Agent configured with Langfuse tracing.
@@ -192,7 +198,11 @@ def create_safety_agent_with_tracing(
     settings = Settings()  # type: ignore[call-arg]
     langfuse_handler = _create_langfuse_handler(settings)
 
-    agent = create_safety_agent(model, use_markdown_rules=use_markdown_rules)
+    agent = create_safety_agent(
+        model,
+        use_markdown_rules=use_markdown_rules,
+        middleware=middleware,
+    )
     return agent.with_config(callbacks=[langfuse_handler])
 
 

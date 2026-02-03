@@ -17,6 +17,7 @@ Commands:
     /quit, /exit, /q - Exit the chat
     /clear - Clear conversation history
     /activations - Show SAE activation analysis
+    /trace - Show last agent trajectory trace
     /markdown - Switch to Markdown system prompt
     /plain - Switch to Plain Text system prompt
     /memory - Show GPU memory stats
@@ -67,6 +68,7 @@ from model_evaluation.main_agent.rag_agent import (
     create_safety_agent_with_tracing,
 )
 from model_evaluation.main_agent.tools import EvaluationContext
+from model_evaluation.tracing import AgentTrace, TrajectoryCapture
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Terminal & ANSI Utilities
@@ -490,35 +492,35 @@ def display_memory_stats() -> None:
             label="Allocated",
             value=f"{stats['allocated']:.2f} GB",
             color=BRAND_SUCCESS,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Reserved",
             value=f"{stats['reserved']:.2f} GB",
             color=BRAND_WARNING,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Peak",
             value=f"{stats['peak']:.2f} GB",
             color=BRAND_ACCENT,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Free",
             value=f"{stats['free']:.2f} GB",
             color=BRAND_INFO,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Total",
             value=f"{stats['total']:.2f} GB",
             color=Colors.WHITE,
-        )
+        ),
     )
 
     # Visual memory bar
@@ -537,14 +539,14 @@ def display_session_stats(stats: SessionStats) -> None:
             label="Prompt Style",
             value=stats.prompt_style,
             color=BRAND_PRIMARY,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="System Tokens",
             value=f"{stats.system_prompt_tokens:,}",
             color=Colors.WHITE,
-        )
+        ),
     )
 
     # Conversation stats
@@ -554,7 +556,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=str(stats.total_turns),
             color=BRAND_SUCCESS,
             icon=ICONS["speech"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -562,7 +564,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.total_input_tokens:,}",
             color=BRAND_WARNING,
             icon=ICONS["input"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -570,7 +572,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.total_output_tokens:,}",
             color=BRAND_ACCENT,
             icon=ICONS["output"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -578,7 +580,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.last_total_context_tokens:,}",
             color=BRAND_ERROR,  # Detailed context usage
             icon=ICONS["list"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -586,7 +588,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=str(stats.total_tool_calls),
             color=BRAND_INFO,
             icon=ICONS["tools"],
-        )
+        ),
     )
 
     # Performance stats
@@ -596,7 +598,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.avg_latency_ms:.0f} ms",
             color=Colors.WHITE,
             icon=ICONS["clock"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -604,7 +606,7 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.tokens_per_second:.1f}",
             color=BRAND_SUCCESS,
             icon=ICONS["lightning"],
-        )
+        ),
     )
     print(
         create_stat_line(
@@ -612,13 +614,151 @@ def display_session_stats(stats: SessionStats) -> None:
             value=f"{stats.avg_steps:.1f}",
             color=BRAND_PRIMARY,
             icon=ICONS["refresh"],
-        )
+        ),
     )
 
     # Latency sparkline if we have history
     if stats.latency_history:
         chart = create_mini_chart(values=stats.latency_history, width=30)
         print(f"\n  {styled('Latency trend:', Colors.DIM)} {chart}")
+
+
+def display_trace_detail(trace: AgentTrace) -> None:
+    """Display a detailed view of an agent trace.
+
+    Shows each step's model response, tool calls with arguments/results,
+    and per-step token counts.
+
+    Args:
+        trace: The AgentTrace to display.
+    """
+    print(create_section_header(title="Agent Trace", icon=ICONS["target"]))
+
+    # Trace metadata
+    print(
+        create_stat_line(
+            label="Trace ID",
+            value=trace.trace_id[:12] + "...",
+            color=BRAND_MUTED,
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Question",
+            value=(
+                trace.question_text[:80] + "..."
+                if len(trace.question_text) > 80
+                else trace.question_text
+            ),
+            color=Colors.WHITE,
+        ),
+    )
+    print(
+        create_stat_line(
+            label="System Prompt",
+            value=trace.system_prompt_format,
+            color=BRAND_PRIMARY,
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Tools Available",
+            value=", ".join(trace.available_tools) if trace.available_tools else "none",
+            color=BRAND_INFO,
+        ),
+    )
+
+    # Aggregate summary
+    print(create_section_header(title="Summary", icon=ICONS["chart"]))
+    print(
+        create_stat_line(
+            label="Total Steps",
+            value=str(trace.total_steps),
+            color=BRAND_ACCENT,
+            icon=ICONS["refresh"],
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Total Tool Calls",
+            value=str(trace.total_tool_calls),
+            color=BRAND_INFO,
+            icon=ICONS["tools"],
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Input Tokens",
+            value=f"{trace.total_input_tokens:,}",
+            color=BRAND_WARNING,
+            icon=ICONS["input"],
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Output Tokens",
+            value=f"{trace.total_output_tokens:,}",
+            color=BRAND_SUCCESS,
+            icon=ICONS["output"],
+        ),
+    )
+    print(
+        create_stat_line(
+            label="Duration",
+            value=f"{trace.total_duration_ms:,.0f}ms",
+            color=Colors.WHITE,
+            icon=ICONS["clock"],
+        ),
+    )
+
+    # Per-step detail
+    for step in trace.steps:
+        step_badge = styled(
+            f" Step {step.step_number} ",
+            Colors.BG_BLUE,
+            Colors.WHITE,
+        )
+        tokens_info = styled(
+            f"(in={step.input_tokens:,} out={step.output_tokens:,})",
+            Colors.DIM,
+        )
+        print(f"\n  {step_badge} {tokens_info}")
+
+        # Model response content (truncated)
+        if step.model_response_content:
+            content_preview = step.model_response_content[:120]
+            if len(step.model_response_content) > 120:
+                content_preview += "..."
+            content_styled = styled(content_preview, Colors.WHITE)
+            print(f"    {styled('Response:', Colors.DIM)} {content_styled}")
+
+        # Tool calls requested
+        for tc in step.model_response_tool_calls:
+            arrow = styled("→", BRAND_INFO)
+            tool_name = styled(tc.get("name", "?"), BRAND_PRIMARY, Colors.BOLD)
+            args = tc.get("args", {})
+            args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
+            args_styled = styled(f"({args_str})", Colors.DIM)
+            print(f"    {arrow} {tool_name}{args_styled}")
+
+        # Tool execution results
+        for tex in step.tool_executions:
+            check = styled(ICONS["check"], BRAND_SUCCESS)
+            name_styled = styled(tex.tool_name, BRAND_SUCCESS)
+            duration = styled(f"{tex.duration_ms:.0f}ms", Colors.DIM)
+            result_preview = tex.result[:100]
+            if len(tex.result) > 100:
+                result_preview += "..."
+            result_styled = styled(result_preview, Colors.DIM)
+            print(f"    {check} {name_styled} [{duration}]: {result_styled}")
+
+    # Final answer
+    if trace.final_answer:
+        print(create_section_header(title="Final Answer", icon=ICONS["robot"]))
+        for line in trace.final_answer.split("\n"):
+            print(f"    {line}")
+
+    print()
 
 
 def display_activation_summary(model: GemmaWithSAE) -> None:
@@ -640,21 +780,21 @@ def display_activation_summary(model: GemmaWithSAE) -> None:
             label="Total Tokens",
             value=str(len(activations.tokens)),
             color=Colors.WHITE,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Prompt Tokens",
             value=str(activations.prompt_len),
             color=BRAND_WARNING,
-        )
+        ),
     )
     print(
         create_stat_line(
             label="Answer Tokens",
             value=str(answer_tokens),
             color=BRAND_SUCCESS,
-        )
+        ),
     )
 
     # SAE Metrics with visual indicators
@@ -835,7 +975,7 @@ class StreamingTrajectory:
             docs_icon = styled("📚", BRAND_SUCCESS)
             count_styled = styled(str(chunks_found), BRAND_SUCCESS, Colors.BOLD)
             print(f"    {docs_icon} Found {count_styled} relevant chunks:")
-            print("")
+            print()
 
             # Display each chunk's metadata
             for chunk in chunks:
@@ -883,7 +1023,7 @@ class StreamingTrajectory:
 
                 print(f"      {rank_badge} {privacy_badge} score={score_styled} {source_styled}")
 
-            print("")
+            print()
 
     def start_response_stream(self) -> None:
         """Initialize response streaming display."""
@@ -892,7 +1032,7 @@ class StreamingTrajectory:
             robot = styled(ICONS["robot"], BRAND_SUCCESS)
             agent_label = styled("Agent", BRAND_SUCCESS, Colors.BOLD)
             print(f"\n  {robot} {agent_label}:")
-            print("")
+            print()
             sys.stdout.write("    ")
 
     def stream_token(self, *, token: str) -> None:
@@ -930,7 +1070,7 @@ class StreamingTrajectory:
         robot = styled(ICONS["robot"], BRAND_SUCCESS)
         agent_label = styled("Agent", BRAND_SUCCESS, Colors.BOLD)
         print(f"\n  {robot} {agent_label}:")
-        print("")
+        print()
 
         # Indent response text
         for line in response.split("\n"):
@@ -954,7 +1094,7 @@ class StreamingTrajectory:
         else:
             latency_color = BRAND_ERROR
 
-        print("")
+        print()
         print(f"  {styled('╭' + '─' * 55, border_color)}")
 
         # Latency
@@ -1019,13 +1159,13 @@ def display_welcome_banner() -> None:
     # Subtitles - centered
     subtitle1 = "Small Language Model Agent Testing Interface"
     subtitle2 = "feat. Gemma Scope 2 SAE Analysis"
-    print("")
+    print()
     # Center based on banner width (~52 chars)
     padding1 = (52 - len(subtitle1)) // 2
     padding2 = (52 - len(subtitle2)) // 2
     print(styled(" " * padding1 + subtitle1, Colors.DIM, Colors.ITALIC))
     print(styled(" " * padding2 + subtitle2, Colors.DIM))
-    print("")
+    print()
 
 
 def display_commands_help() -> None:
@@ -1034,6 +1174,7 @@ def display_commands_help() -> None:
         ("/quit", "Exit the chat", "q"),
         ("/clear", "Clear conversation history", None),
         ("/activations", "Show SAE activation analysis", None),
+        ("/trace", "Show last agent trajectory trace", None),
         ("/markdown", "Switch to Markdown prompt", None),
         ("/plain", "Switch to Plain Text prompt", None),
         ("/private", "KB generates private docs (default)", None),
@@ -1063,7 +1204,7 @@ def display_commands_help() -> None:
         else:
             print(f"  {cmd_styled:<25} {desc_styled}")
 
-    print("")
+    print()
     print(create_section_header(title="Question Testing", icon=ICONS["question"]))
 
     for cmd, desc, alias in question_commands:
@@ -1075,7 +1216,7 @@ def display_commands_help() -> None:
         else:
             print(f"  {cmd_styled:<25} {desc_styled}")
 
-    print("")
+    print()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1270,7 +1411,7 @@ def display_questions_browser(
     filter_text = " │ ".join(filters)
 
     # Header
-    print("")
+    print()
     header = gradient_text(
         f"{ICONS['list']} Questions Browser",
         (138, 180, 248),
@@ -1290,11 +1431,11 @@ def display_questions_browser(
     page_info = styled(f"Page {state.page}/{total_pages}", BRAND_MUTED)
     total_info = styled(f"({total} questions)", Colors.DIM)
     print(f"  {filter_label} {filter_value} │ {page_info} {total_info}")
-    print("")
+    print()
 
     if not page_questions:
         print(f"  {styled('No questions match the current filters.', Colors.DIM)}")
-        print("")
+        print()
         return
 
     # Question list
@@ -1319,7 +1460,7 @@ def display_questions_browser(
 
         print(f" {styled(id_text, id_style)} │ {q_text:<68} │ {styled(context_text, Colors.DIM)}")
 
-    print("")
+    print()
 
     # Navigation hints
     nav_hints = []
@@ -1332,7 +1473,7 @@ def display_questions_browser(
 
     hints_text = " │ ".join(nav_hints)
     print(f"  {styled('Commands:', Colors.DIM)} {hints_text}")
-    print("")
+    print()
 
 
 def _display_width(text: str) -> int:
@@ -1469,7 +1610,7 @@ def _print_wrapped_field(
     right_border = styled("│", border_color)
     print(
         f"  {left_border}  {label_styled:<{label_width + len(label_styled) - len(label)}} "
-        f"{value_styled}{' ' * max(0, padding)}{right_border}"
+        f"{value_styled}{' ' * max(0, padding)}{right_border}",
     )
 
     # Continuation lines (indented to align with value)
@@ -1487,7 +1628,7 @@ def display_question_detail(*, question: Question) -> None:
     Args:
         question: The question to display.
     """
-    print("")
+    print()
 
     box_width = 60
     content_width = box_width - 2  # Account for    # Determine styles based on refusal status
@@ -1561,14 +1702,14 @@ def display_question_detail(*, question: Question) -> None:
     print(f"  {styled('╰' + '─' * box_width + '╯', border_color)}")
 
     # Status message
-    print("")
+    print()
     sending_msg = gradient_text(
         f"{ICONS['lightning']} Sending question...",
         (129, 199, 132),
         (129, 212, 250),
     )
     print(f"  {sending_msg}")
-    print("")
+    print()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1790,7 +1931,7 @@ def display_model_selection_menu() -> ModelOption:
     Returns:
         The selected ModelOption.
     """
-    print("")
+    print()
     # Centered header
     menu_width = 62
     header_text = f"{ICONS['model']} Select Model Configuration"
@@ -1803,7 +1944,7 @@ def display_model_selection_menu() -> ModelOption:
     header_padding = (menu_width - len(header_text)) // 2
     print(f"{' ' * header_padding}{header}")
     print(f"  {styled('─' * (menu_width - 2), Colors.DIM)}")
-    print("")
+    print()
 
     for option in MODEL_OPTIONS:
         # Key badge
@@ -1843,9 +1984,9 @@ def display_model_selection_menu() -> ModelOption:
         overhead_text = styled(f"+{overhead_pct}% overhead", Colors.DIM)
         print(
             f"       {tree_end} {act_label} {act_val}  {sep}  {sae_label} {sae_val}  {sep}  "
-            f"{overhead_text}"
+            f"{overhead_text}",
         )
-        print("")
+        print()
 
     print(f"  {styled('─' * (menu_width - 2), Colors.DIM)}")
 
@@ -1857,7 +1998,7 @@ def display_model_selection_menu() -> ModelOption:
         try:
             choice = input(f"  {prompt_icon} {prompt_text} ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("")
+            print()
             raise
 
         # Find matching option
@@ -1866,7 +2007,7 @@ def display_model_selection_menu() -> ModelOption:
                 check = styled(ICONS["check"], BRAND_SUCCESS)
                 selected_msg = styled(f"Selected: {option.name}", BRAND_SUCCESS)
                 print(f"\n  {check} {selected_msg}")
-                print("")
+                print()
                 return option
 
         # Invalid choice
@@ -1911,7 +2052,7 @@ def load_model(settings: Settings) -> GemmaWithSAE:
             value=model_id,
             color=BRAND_PRIMARY,
             icon=ICONS["cube"],
-        )
+        ),
     )
 
     # Load SAE
@@ -1933,7 +2074,7 @@ def load_model(settings: Settings) -> GemmaWithSAE:
             value=str(settings.effective_sae_layer),
             color=BRAND_ACCENT,
             icon=ICONS["brain"],
-        )
+        ),
     )
     print(create_stat_line(label="SAE Width", value=settings.sae_width, color=BRAND_INFO))
 
@@ -1947,14 +2088,14 @@ def load_model(settings: Settings) -> GemmaWithSAE:
     )
 
     # Success message
-    print("")
+    print()
     success_msg = gradient_text(
         f"{ICONS['sparkles']} Model stack ready!",
         (129, 199, 132),
         (129, 212, 250),
     )
     print(f"  {success_msg}")
-    print("")
+    print()
 
     display_memory_stats()
 
@@ -1973,7 +2114,12 @@ def count_tokens(model: GemmaWithSAE, text: str) -> int:
 
 def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     """Run the interactive chat loop with streaming support."""
-    agent = create_safety_agent_with_tracing(model, use_markdown_rules=use_markdown)
+    tracer = TrajectoryCapture()
+    agent = create_safety_agent_with_tracing(
+        model,
+        use_markdown_rules=use_markdown,
+        middleware=[tracer],
+    )
 
     # Initialize KB Generator session for the search_knowledge_base tool
     print(f"\n  {styled('Initializing KB Generator Agent...', Colors.DIM)}")
@@ -2031,7 +2177,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
     while True:
         try:
-            print("")
+            print()
             user_input = input(f"  {prompt_icon} {user_label}: ").strip()
         except (KeyboardInterrupt, EOFError):
             wave = styled(ICONS["wave"], BRAND_PRIMARY)
@@ -2061,6 +2207,16 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             display_activation_summary(model)
             continue
 
+        if cmd == "/trace":
+            last_trace = tracer.last_trace
+            if last_trace is None:
+                warn_icon = styled(ICONS["warning"], BRAND_WARNING)
+                warn_msg = styled("No trace recorded yet.", BRAND_WARNING)
+                print(f"\n  {warn_icon} {warn_msg}")
+            else:
+                display_trace_detail(last_trace)
+            continue
+
         if cmd == "/memory":
             display_memory_stats()
             continue
@@ -2074,7 +2230,11 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             continue
 
         if cmd == "/markdown":
-            agent = create_safety_agent_with_tracing(model, use_markdown_rules=True)
+            agent = create_safety_agent_with_tracing(
+                model,
+                use_markdown_rules=True,
+                middleware=[tracer],
+            )
             stats.prompt_style = "Markdown"
             stats.system_prompt_tokens = count_tokens(model, MARKDOWN_SYSTEM_PROMPT)
             mode_badge = styled(" Markdown ", Colors.BOLD, Colors.BG_BLUE, Colors.WHITE)
@@ -2083,7 +2243,11 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             continue
 
         if cmd == "/plain":
-            agent = create_safety_agent_with_tracing(model, use_markdown_rules=False)
+            agent = create_safety_agent_with_tracing(
+                model,
+                use_markdown_rules=False,
+                middleware=[tracer],
+            )
             stats.prompt_style = "Plain Text"
             stats.system_prompt_tokens = count_tokens(model, PLAIN_SYSTEM_PROMPT)
             mode_badge = styled(" Plain Text ", Colors.BOLD, Colors.BG_MAGENTA, Colors.WHITE)
@@ -2248,7 +2412,8 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
                 elif stream_mode == "updates":
                     for source, update in chunk.items():
-                        # Collect messages from each update for conversation history
+                        if update is None:
+                            continue
                         update_messages = update.get("messages", [])
 
                         # Handle completed messages
@@ -2278,11 +2443,6 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                                         result=content,
                                     )
 
-            # Update token stats from model wrapper (source of truth)
-            stats.last_total_context_tokens = model.last_input_token_count
-            stats.total_input_tokens = model.total_input_tokens
-            stats.total_output_tokens = model.total_output_tokens
-
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             # Finish streaming display and show final response
@@ -2292,27 +2452,35 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             if trajectory.final_response:
                 trajectory.display_final_response(response=trajectory.final_response)
 
-            # Update session stats
+            # Use middleware trace as source of truth for stats
+            trace = tracer.last_trace
+            if trace is not None:
+                turn_input_tokens = trace.total_input_tokens
+                turn_output_tokens = trace.total_output_tokens
+                turn_duration_ms = trace.total_duration_ms
+                turn_steps = trace.total_steps
+            else:
+                turn_input_tokens = model.last_input_token_count
+                turn_output_tokens = (
+                    count_tokens(model, trajectory.final_response)
+                    if trajectory.final_response
+                    else 0
+                )
+                turn_duration_ms = latency_ms
+                turn_steps = trajectory.agent_steps
+
             stats.total_turns += 1
-            # Note: total_input/output_tokens are already synced from model wrapper above
-
-            # Calculate turn tokens for history/summary
-            # Use context size as "input cost" for this turn
-            turn_input_tokens = model.last_input_token_count
-
-            # Calculate output tokens for this turn (approximate from final response)
-            turn_output_tokens = 0
-            if trajectory.final_response:
-                turn_output_tokens = count_tokens(model, trajectory.final_response)
-
-            stats.total_latency_ms += latency_ms
-            stats.agent_steps_history.append(trajectory.agent_steps)
-            stats.latency_history.append(latency_ms)
+            stats.last_total_context_tokens = model.last_input_token_count
+            stats.total_input_tokens += turn_input_tokens
+            stats.total_output_tokens += turn_output_tokens
+            stats.total_latency_ms += turn_duration_ms
+            stats.agent_steps_history.append(turn_steps)
+            stats.latency_history.append(turn_duration_ms)
             stats.tokens_history.append((turn_input_tokens, turn_output_tokens))
 
             # Display summary
             trajectory.display_summary(
-                latency_ms=latency_ms,
+                latency_ms=turn_duration_ms,
                 input_tokens=turn_input_tokens,
                 output_tokens=turn_output_tokens,
             )

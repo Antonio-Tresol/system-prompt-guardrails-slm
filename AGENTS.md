@@ -15,6 +15,71 @@ See @../pyproject.toml for available dependencies and project configuration.
 - **ChromaDB** for vector storage
 - **Transformers / PyTorch** for model inference
 - **Gemma Scope 2 SAEs** for interpretability analysis
+- **Loguru** for centralized logging (`utils/logging.py`)
+- **Pydantic Settings** for configuration management
+
+## Project Structure
+
+```
+safety-prompts-for-slm/
+├── data_generation/            # Synthetic data generation pipeline
+│   ├── agents.py              # Agent definitions (simple & deep)
+│   ├── config.py              # Pydantic settings (OpenRouter, Langfuse)
+│   ├── constants.py           # Model lists, themes, defaults
+│   ├── generate_data.py       # CLI: `uv run generate_corpus`
+│   ├── internal_prompts.py    # System prompt templates
+│   ├── utils.py               # Helper functions
+│   ├── prompts/               # Prompt templates
+│   ├── synthetic_data/        # Pre-generated cookbooks
+│   ├── questions/             # Generated evaluation questions
+│   ├── universe_contexts/     # YAML restaurant definitions
+│   │   ├── carnelian_table.yaml
+│   │   ├── brine_and_riddle.yaml
+│   │   ├── moonlit_granary.yaml
+│   │   └── velvet_hourglass.yaml
+│   └── question_generator/    # Question generation sub-module
+│       ├── agent.py           # Question generator agent
+│       ├── cli.py             # CLI: `uv run generate_questions`
+│       ├── schemas.py         # Pydantic models for questions
+│       └── prompts.py
+│
+├── model_evaluation/           # Model evaluation and RAG agent
+│   ├── chat.py                # Terminal chat interface: `uv run mi_sml_agent`
+│   ├── config.py              # Settings (Gemma, SAE, API keys)
+│   └── main_agent/            # Core agent implementation
+│       ├── gemma_wrapper.py   # GemmaWithSAE (BaseChatModel wrapper)
+│       ├── gemma_scope_sae.py # JumpReLUSAE loading and feature extraction
+│       ├── gemma_model_loader.py # Model loading with quantization
+│       ├── rag_agent.py       # Safety evaluation agent (MD/Plain prompts)
+│       ├── tools.py           # search_knowledge_base & think tools
+│       └── kb_generator/      # Dynamic knowledge base generation
+│           ├── agent.py       # KB generator agent
+│           ├── schemas.py     # DocumentChunk, GeneratorOutput models
+│           ├── session.py     # GeneratorSession (stateful generation)
+│           └── tools.py       # Agent tools
+│
+├── utils/                     # Shared utilities
+│   └── logging.py             # Loguru logging configuration
+│
+├── tests/                     # Test suite (pytest)
+│   ├── gemma/                 # GemmaWithSAE and agent tests
+│   │   ├── conftest.py        # Shared fixtures
+│   │   ├── test_gemma_wrapper.py
+│   │   ├── test_wrapper_logic.py
+│   │   ├── test_integration_gemma.py
+│   │   ├── test_real_agent.py
+│   │   ├── test_agent_integration.py
+│   │   └── test_middleware.py
+│   ├── knowledge_base/        # KB ingestion tests
+│   ├── model_evaluation/      # KB generator tests
+│   ├── test_chat_features.py
+│   └── test_generator_integration.py
+│
+├── .env.example               # Environment variables template
+├── pyproject.toml             # Dependencies, ruff/pytest config
+├── research_design.md         # Full research design
+└── AGENTS.md                  # Shared project standards (mirrors .claude/CLAUDE.md)
+```
 
 ## Common Commands
 
@@ -31,6 +96,64 @@ uv run ruff format .
 # Run tests
 uv run pytest
 ```
+
+## CLI Entry Points
+
+| Command | Module | Purpose |
+|---------|--------|---------|
+| `uv run generate_corpus` | `data_generation.generate_data:main` | Generate synthetic restaurant cookbooks |
+| `uv run generate_questions` | `data_generation.question_generator.cli:main` | Generate evaluation questions from universe contexts |
+| `uv run mi_sml_agent` | `model_evaluation.chat:main` | Interactive terminal chat with the safety agent |
+| `uv run langgraph dev` | LangGraph CLI | Launch LangGraph Studio for visual debugging |
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` | Yes | API key for OpenRouter |
+| `OPENROUTER_BASE_URL` | Yes | `https://openrouter.ai/api/v1` |
+| `LANGFUSE_SECRET_KEY` | Yes | Langfuse secret key |
+| `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse public key |
+| `LANGFUSE_BASE_URL` | Yes | `https://us.cloud.langfuse.com` |
+| `LANGSMITH_API_KEY` | No | LangSmith API key (for Studio debugging) |
+| `HF_TOKEN` | No | HuggingFace token (for gated Gemma models) |
+| `GEMMA_MODEL_SIZE` | No | `1b`, `4b` (default), `12b`, `27b` |
+| `GEMMA_MODEL_TYPE` | No | `pt` (pretrained) or `it` (instruction-tuned, default) |
+| `GEMMA_QUANTIZATION` | No | `int4` or None (bf16, default) |
+| `SAE_WIDTH` | No | `16k` (default), `65k`, `262k`, `1m` |
+| `SAE_L0_SIZE` | No | `small`, `medium` (default), `big` |
+| `KB_GENERATOR_MODEL` | No | OpenRouter model ID for KB generation |
+| `MAX_NEW_TOKENS` | No | Max tokens to generate (default: 8000) |
+
+## Architecture
+
+### Agent Pipeline
+
+1. User question enters the **Safety Agent** (`rag_agent.py`)
+2. Agent uses `think` tool to plan, then `search_knowledge_base` to retrieve context
+3. **KB Generator Agent** dynamically creates 1-3 document chunks per query (not a static vector store)
+4. Each chunk has a `privacy_level` (`public` / `private` / `mixed`)
+5. Agent decides: answer (compliance) or refuse (safety) based on privacy labels
+6. **GemmaWithSAE** captures SAE feature activations throughout for mechanistic analysis
+
+### Key Design Decisions
+
+- **Dynamic KB generation** (not static vector store): Prevents data leakage and ensures research integrity
+- **Universe contexts as YAML**: Clear separation of public vs private information
+- **GeneratorSession with LangGraph checkpointer**: Maintains coherence across multi-turn queries
+- **`@dynamic_prompt` middleware**: Switches system prompt format (MD/Plain) at runtime for A/B testing
+- **Context injection via dataclasses** (`EvaluationContext`): Runtime config without globals
+- **Named arguments enforced via `*`**: No positional params when multiple parameters exist
+
+### Key Classes
+
+- `GemmaWithSAE` (`gemma_wrapper.py`): Custom `BaseChatModel` wrapping Gemma 3 + SAE hooks
+- `JumpReLUSAE` (`gemma_scope_sae.py`): Sparse autoencoder from Gemma Scope 2
+- `GeneratorSession` (`kb_generator/session.py`): Stateful KB generation across queries
+- `EvaluationContext` (`tools.py`): Runtime context (privacy flag, session, universe context)
+- `DocumentChunk` (`kb_generator/schemas.py`): Structured KB output with privacy metadata
 
 ## Skills
 
