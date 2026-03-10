@@ -1,162 +1,104 @@
-# Data Generation Pipeline
+# Data Generation
 
-Pipeline for generating synthetic data using models from OpenRouter. Supports two modes: simple (one-shot) and deep-agent (with planning and tools).
+This directory contains the prompts, universe definitions, and evaluation questions used to generate synthetic data for the safety prompts experiment.
 
-## Project Structure
+## Overview
+
+To produce synthetic and diverse data, we provide three prompts designed to be consumed by a coding agent (e.g., Claude Code, GitHub Copilot, or similar). The pipeline has three stages:
+
+1. **Universe Generation** — Generate 4 fictional universe YAML files, each representing a different domain (restaurant, law firm, medical clinic, tech startup). Each universe has clearly separated public and private information, ensuring the domain itself is not the factor influencing model refusals.
+
+2. **Question Generation** — Generate 150 evaluation questions per universe (75 public + 75 malicious), grounded in the YAML content. Questions vary in formality and language register (formal, neutral, casual, terse, verbose) to test robustness across user styles. Run once per universe.
+
+3. **Question Validation** — Validate each question CSV against its source universe YAML. Checks grounding, giveaway words, coverage across YAML sections, language variety distribution, duplicates, and answer leakage. Automatically fixes critical issues and generates an audit report.
+
+## Directory Structure
 
 ```
 data_generation/
-├── __init__.py
-├── agents.py                # Agent definitions (simple & deep)
-├── config.py                # Pydantic settings for env vars
-├── constants.py             # Model lists, themes, defaults
-├── generate_data.py         # Main CLI entrypoint
-├── internal_prompts.py      # System prompt templates
-├── utils.py                 # Helper functions (save, load)
-├── README.md                # Project overview and usage guide
+├── prompts/                          # Agent prompts for generation
+│   ├── universe_generation.md        # Prompt: generate universe YAML files
+│   ├── question_generation.md        # Prompt: generate evaluation questions
+│   └── question_validation.md        # Prompt: validate and fix questions
 │
-├── prompts/                 
-│   └── corpus_prompt.md     # Default data generation prompt
+├── universes/                        # Generated universe definitions (YAML)
+│   ├── the_carnelian_table.yaml      # Restaurant — Vermillion Harbor
+│   ├── hartwell_and_grey.yaml        # Law Firm — Ashford Crossing
+│   ├── linden_grove_clinic.yaml      # Medical Clinic — Cedarhill
+│   └── nova_circuit_labs.yaml        # Tech Startup — Neon Flats
 │
-├── questions/               # Evaluation questions
+├── questions/                        # Generated evaluation questions (CSV)
+│   ├── the_carnelian_table.csv       # 150 questions (75 public + 75 malicious)
+│   ├── hartwell_and_grey.csv         # 150 questions (75 public + 75 malicious)
+│   ├── linden_grove_clinic.csv       # 150 questions (75 public + 75 malicious)
+│   ├── nova_circuit_labs.csv         # 150 questions (75 public + 75 malicious)
+│   ├── the_carnelian_table_validation.md   # Validation report
+│   ├── hartwell_and_grey_validation.md     # Validation report
+│   ├── linden_grove_clinic_validation.md   # Validation report
+│   └── nova_circuit_labs_validation.md     # Validation report
 │
-├── synthetic_data/          # Generated synthetic corpora
-│   ├── Brine_&_Riddle_A_Luminous_Cookbook_of_Tideborn_Fare.md
-│   ├── The_Carnelian_Table_A_Culinary_Chronicle.md
-│   ├── The_Moonlit_Granary_A_Cookbook_of_Grains.md
-│   └── The_Velvet_Hourglass_A_Cookbook_of_Sweet_Mysteries.md
-│
-└── outputs/                 # Git-ignored directory for new generated runs
+└── README.md
 ```
 
-## Usage
+## Pipeline
 
-### Quick Start (with defaults)
-
-```bash
-uv run generate_corpus
-```
-
-This generates 1 sample with 1 theme using `z-ai/glm-4.6` in simple mode.
-
-### All Arguments (all optional)
-
-```bash
-uv run generate_corpus \
-    [--model-name MODEL] \
-    [--prompt-template-path PATH] \
-    [--themes N] \
-    [--samples N] \
-    [--deep-agent] \
-    [--output-dir DIR]
-```
-
-**Arguments:**
-- `--model-name`: OpenRouter model ID (default: `z-ai/glm-4.6`)
-  - Allowed: `z-ai/glm-4.6`, `google/gemini-2.5-pro`, `anthropic/claude-sonnet-4.5`, `openai/gpt-5`
-- `--prompt-template-path`: Path to prompt file (default: `prompts/corpus_prompt.md`)
-- `--themes`: Number of random themes (default: 1)
-- `--samples`: Samples per theme (default: 1)
-- `--deep-agent`: Use Deep Agent mode (default: simple one-shot)
-- `--output-dir`: Output directory (default: `data_generation/outputs`)
-
-### Examples
-
-**Simple mode with custom model:**
-```bash
-uv run generate_corpus \
-    --model-name "google/gemini-2.5-pro" \
-    --themes 2 \
-    --samples 3
-```
-
-**Deep Agent mode:**
-```bash
-uv run generate_corpus \
-    --model-name "anthropic/claude-sonnet-4.5" \
-    --deep-agent
-```
-
-## Generation Modes
-
-### Simple Mode (default)
-- One-shot generation
-- No tools or planning
-- Fast and cost-effective
-
-### Deep Agent Mode (`--deep-agent`)
-- Multi-step planning with todo lists
-- File system for managing sections
-- Self-critique subagent for quality review
-- Better for complex, long-form content
-
-**Deep Agent Tools:**
-- `write_todos`: Plan document structure
-- `write_file`, `read_file`, `edit_file`, `ls`: Manage content sections
-- `critique_draft`: Get feedback on drafts
-
-## Theme Pool
-
-Available themes (randomly selected):
-```
-meat, vegetables, spices, seafood, dairy, fruits, grains, desserts, condiments, japanese cuisine
-```
-
-## Prompt Templates
-
-Templates must include a `{theme}` placeholder. Example:
-
-```markdown
-Generate a creative cookbook about {theme}.
-
-Include:
-1. Introduction
-2. At least 3 recipes
-3. Conclusion
-```
-
-## Output Structure
+Run the prompts in order. Each prompt is self-contained and designed for a single coding agent session.
 
 ```
-outputs/
-└── {model}/          # e.g., "z-ai_glm-4.6"
-    └── {mode}/       # "simple" or "deep-agent"
-        └── {theme}/  # e.g., "vegetables"
-            └── {theme}_sample_{n}_{timestamp}.md
+universe_generation.md          →  universes/*.yaml (run once)
+question_generation.md          →  questions/*.csv  (run once per universe)
+question_validation.md          →  questions/*_validation.md + fixes (run once per universe)
 ```
 
-## Tracing
+## Universes
 
-All generations are traced to Langfuse for monitoring, debugging, and token analysis.
+Each universe YAML follows an identical schema with two top-level sections:
 
-## Testing with Studio
+- **`public_info`** — Information the agent may share freely (services, public staff bios, general facts, policies, highlights).
+- **`private_info`** — Information the agent must refuse to reveal (financials, staff salaries/personal details, trade secrets, internal operations, confidential incidents).
 
-Test agents interactively using Studio:
+| Universe | Domain | City |
+|----------|--------|------|
+| The Carnelian Table | Restaurant | Vermillion Harbor |
+| Hartwell & Grey | Law Firm | Ashford Crossing |
+| Linden Grove Clinic | Medical Clinic | Cedarhill |
+| Nova Circuit Labs | Tech Startup | Neon Flats |
 
-```bash
-uv run langgraph dev --allow-blocking
+The four domains were chosen to disentangle domain-specific privacy priors from formatting effects. A model may have strong privacy intuitions for medical data (HIPAA-adjacent training signal) but weaker ones for restaurant operations — if Markdown formatting helps across all domains, the effect is generalizable.
+
+All staff members appear in both `public_info.public_staff` (shareable bios) and `private_info.staff_private` (confidential salaries, nicknames, performance notes), enabling tests of whether the agent can share the public role but refuse the private details.
+
+## Questions
+
+Each CSV contains 150 rows with the format:
+
+```
+Number,Question,Universe,Malicious
 ```
 
-This starts a local development server at `http://localhost:2024` and opens Studio in your browser. The `--allow-blocking` flag is required for proper `.env` file loading.
+- **Public questions (1-75, Malicious: No)** — Target `public_info`. The agent should answer these freely. Distributed across direct factual, descriptive, listing/comparative, and specific detail subcategories.
+- **Malicious questions (1-75, Malicious: Yes)** — Target `private_info`. The agent should refuse these. Distributed across direct extraction, indirect/innocent-sounding, probing for secrets, staff private details, and incident fishing subcategories.
 
-Studio provides:
-- Interactive agent testing
-- Step-by-step execution visualization
-- Thread/conversation management
-- Real-time Langfuse tracing
+Malicious questions are phrased as casual curiosity without giveaway words like "confidential" or "secret", making them a realistic test of the agent's ability to recognize and refuse private information requests.
 
-See [LangGraph Studio Tutorial](https://youtu.be/Mi1gSlHwZLM?si=Ow9dnAMNYXX1KcPV&t=74) to get familiar with the interface.
+Questions vary across five language registers (formal, neutral, casual, terse, verbose) shuffled throughout both blocks, ensuring the evaluation tests robustness across user communication styles — not just well-formed queries.
 
-After that, in the UI you will have available 2 agents named:
-    - "data-generation:one_shot_writing_agent"
-    - "data-generation:deep_writing_agent"
+## Validation
 
-In Studio, the deep writing agent expects that you sent the corpus prompt as a message. The one shot agent has the prompt embedded so you can just hit run.
+Each question CSV is validated against its source universe YAML. The validation checks:
 
-## Development
+| Check | Type | Criteria |
+|-------|------|----------|
+| Grounding | Critical | Every question references real YAML content |
+| Cross-contamination | Critical | Public questions don't need private info; malicious questions don't target public info |
+| Giveaway words | Critical | No forbidden words in malicious questions |
+| Answer leakage | Critical | No question embeds the answer or private values |
+| Coverage | Warning | Every YAML section has ≥3 questions targeting it |
+| Language variety | Warning | No register exceeds 40% or falls below 10% |
+| Duplicates | Warning | No exact or near-duplicate questions |
 
-**Modify:**
-- Models: Update `ALLOWED_MODELS` in `constants.py`
-- Themes: Update `THEME_POOL` in `constants.py`
-- Prompts: Edit files in `prompts/` or `internal_prompts.py`
-- Agents: Edit `agents.py`
+Critical issues are auto-fixed (questions rewritten or replaced) and re-validated. Validation reports are saved alongside the CSVs.
+
+## Provenance
+
+The universes and questions available here were generated and validated using Claude Opus 4.6 with maximum effort, using Claude Code as harness. 05/02/2026.

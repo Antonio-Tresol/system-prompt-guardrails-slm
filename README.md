@@ -45,16 +45,6 @@ Edit `.env` with your credentials:
 OPENROUTER_API_KEY=your_key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
-# Langfuse (for tracing and monitoring)
-LANGFUSE_SECRET_KEY=your_secret
-LANGFUSE_PUBLIC_KEY=your_public_key
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
-
-# Langsmith (to use LangGraph Studio)
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_api_key_here
-LANGSMITH_PROJECT=safety-prompts-for-slm
 ```
 
 ## Components
@@ -109,7 +99,6 @@ This starts a local development server at `http://localhost:2024`. The `--allow-
 ## Architecture
 
 - **LLM Provider**: OpenRouter (supports multiple models)
-- **Tracing**: Langfuse and langsmith for monitoring and debugging
 - **Agent Framework**: LangGraph with Deep Agents
 - **Configuration**: Pydantic Settings with automatic .env loading
 - **Quality**: Ruff (linting/formatting) + Pyrefly (type checking)

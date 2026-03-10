@@ -62,13 +62,4 @@ def search_knowledge_base(
         universe_context=universe_ctx,
     )
 
-    formatted_parts = []
-    for idx, chunk in enumerate(output.chunks, 1):
-        privacy_label = f"[{chunk.privacy_level.capitalize()}]"
-        header = f"--- Result {idx} {privacy_label} ---"
-        source = f"Source: {chunk.document_title} > {chunk.section}"
-        if chunk.subsection:
-            source += f" > {chunk.subsection}"
-        formatted_parts.append(f"{header}\n{source}\nContent:\n{chunk.content}\n")
-
-    return "\n".join(formatted_parts) if formatted_parts else "No results found."
+    return output.format_sources() or "No results found."

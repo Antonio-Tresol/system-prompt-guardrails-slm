@@ -1,4 +1,4 @@
-"""Knowledge Base Generator Agent with Langfuse tracing.
+"""Knowledge Base Generator Agent.
 
 This module creates an LLM-based agent that generates synthetic knowledge base
 documents at query time. It uses a dynamic prompt to switch between generating
@@ -9,8 +9,6 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from langchain.agents.structured_output import ToolStrategy
 from langchain_openai import ChatOpenAI
-from langfuse import Langfuse
-from langfuse.langchain import CallbackHandler
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import SecretStr
@@ -90,29 +88,11 @@ def privacy_aware_prompt(request: ModelRequest) -> str:
     return BASE_PROMPT + universe_section + addendum
 
 
-def _create_langfuse_handler(settings: Settings) -> CallbackHandler:
-    """Create a Langfuse callback handler for tracing.
-
-    Args:
-        settings: Settings object with Langfuse credentials.
-
-    Returns:
-        Configured Langfuse CallbackHandler.
-    """
-    _langfuse_client = Langfuse(  # noqa: F841
-        secret_key=settings.langfuse_secret_key,
-        public_key=settings.langfuse_public_key,
-        host=settings.langfuse_base_url,
-    )
-    return CallbackHandler(public_key=settings.langfuse_public_key)
-
-
 def create_kb_generator_agent(
     *,
     settings: Settings | None = None,
-    enable_tracing: bool = True,
 ) -> tuple[CompiledStateGraph, InMemorySaver]:
-    """Create the knowledge base generator agent with Langfuse tracing.
+    """Create the knowledge base generator agent.
 
     The agent uses a dynamic prompt to switch between public/private document
     generation based on the runtime context. It maintains conversation history
@@ -120,7 +100,6 @@ def create_kb_generator_agent(
 
     Args:
         settings: Optional settings, loaded from env if not provided.
-        enable_tracing: Whether to enable Langfuse tracing (default: True).
 
     Returns:
         Tuple of (agent, checkpointer) for session management.
@@ -146,9 +125,5 @@ def create_kb_generator_agent(
         checkpointer=checkpointer,
         name="kb_generator_agent",
     )
-
-    if enable_tracing:
-        langfuse_handler = _create_langfuse_handler(settings)
-        agent = agent.with_config(callbacks=[langfuse_handler])
 
     return agent, checkpointer

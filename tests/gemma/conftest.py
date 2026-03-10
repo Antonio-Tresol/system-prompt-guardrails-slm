@@ -1,4 +1,9 @@
-"""Shared fixtures for Gemma integration tests."""
+"""Shared fixtures for Gemma integration tests.
+
+All tests in this directory require a GPU with 32GB VRAM and
+HuggingFace authentication. They are marked as integration tests
+and skipped by default (run with: ``pytest -m integration``).
+"""
 
 import pytest
 import torch
@@ -7,6 +12,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from model_evaluation.config import Settings
 from model_evaluation.main_agent.gemma_scope_sae import load_gemma_scope_sae
 from model_evaluation.main_agent.gemma_wrapper import GemmaWithSAE
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark all tests in the gemma/ directory as integration tests."""
+    for item in items:
+        if "gemma" in str(item.fspath):
+            item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture(scope="session")

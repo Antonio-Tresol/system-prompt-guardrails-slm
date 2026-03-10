@@ -232,10 +232,10 @@ knowledge_base/vectordb/chroma_db/
 knowledge_base/vectordb/file_tracker.json
 data_generation/papers/2510.18234.pdf
 tests/audit_results_1.0.csv
-.gitignore
 .agent/
 gemmascope2_paper.md
 
-# Evaluation results (trace outputs)
+# Evaluation results — track CSVs and KB cache, ignore heavy binary data
 model_evaluation/evaluation_results/
-results/
+results/*/sae_features/
+results/*/traces/

@@ -5,12 +5,14 @@ that replays the same content for both markdown and plain text runs.
 """
 
 import json
+import time
 from pathlib import Path
 
 from model_evaluation.evaluation.schemas import QuestionRow
 from model_evaluation.main_agent.kb_generator.agent import create_kb_generator_agent
 from model_evaluation.main_agent.kb_generator.schemas import GeneratorOutput
 from model_evaluation.main_agent.kb_generator.session import GeneratorSession
+from utils.logging import logger
 
 
 class CachedGeneratorSession:
@@ -55,36 +57,92 @@ def generate_kb_cache(
     *,
     questions: list[QuestionRow],
     output_path: Path,
+    existing_cache: dict[int, GeneratorOutput] | None = None,
+    max_retries: int = 3,
 ) -> dict[int, GeneratorOutput]:
     """Pre-generate KB content for all questions and save to disk.
 
     Creates a real GeneratorSession and generates content for each question,
-    resetting between questions to ensure independence.
+    resetting between questions to ensure independence. Skips questions that
+    already exist in the cache and retries failures.
 
     Args:
         questions: List of questions to generate KB content for.
         output_path: Path to save the cache JSON file.
+        existing_cache: Previously cached entries to skip re-generating.
+        max_retries: Maximum retry attempts per question on failure.
 
     Returns:
         Dictionary mapping question number to GeneratorOutput.
     """
-    agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+    agent, checkpointer = create_kb_generator_agent()
     session = GeneratorSession(agent=agent, checkpointer=checkpointer)
 
-    cache: dict[int, GeneratorOutput] = {}
+    cache: dict[int, GeneratorOutput] = dict(existing_cache) if existing_cache else {}
+    total = len(questions)
+    skipped = 0
 
-    for question in questions:
+    for i, question in enumerate(questions, start=1):
+        if question.number in cache:
+            skipped += 1
+            logger.debug("[{}/{}] Q{} already cached, skipping", i, total, question.number)
+            continue
+
         session.reset()
-        print(f"  Generating KB for question {question.number}: {question.question[:60]}...")
-
-        output = session.generate(
-            query=question.question,
-            include_private_info=True,
-            universe_context=question.universe_context_key,
+        logger.info(
+            "[{}/{}] Generating KB for Q{}: {}...",
+            i,
+            total,
+            question.number,
+            question.question[:60],
         )
-        cache[question.number] = output
 
-    save_kb_cache(cache=cache, output_path=output_path)
+        for attempt in range(1, max_retries + 1):
+            try:
+                start = time.perf_counter()
+                output = session.generate(
+                    query=question.question,
+                    include_private_info=True,
+                    universe_context=question.universe_context_key,
+                )
+                elapsed = time.perf_counter() - start
+
+                cache[question.number] = output
+                chunks = len(output.chunks) if output.chunks else 0
+                logger.info(
+                    "[{}/{}] Q{} done — {} chunks, {:.1f}s",
+                    i,
+                    total,
+                    question.number,
+                    chunks,
+                    elapsed,
+                )
+                break
+            except Exception:
+                if attempt < max_retries:
+                    logger.warning(
+                        "[{}/{}] Q{} failed (attempt {}/{}), retrying...",
+                        i,
+                        total,
+                        question.number,
+                        attempt,
+                        max_retries,
+                    )
+                    session.reset()
+                else:
+                    logger.error(
+                        "[{}/{}] Q{} failed after {} attempts, skipping",
+                        i,
+                        total,
+                        question.number,
+                        max_retries,
+                    )
+
+        save_kb_cache(cache=cache, output_path=output_path)
+
+    if skipped:
+        logger.info("Skipped {} already-cached entries", skipped)
+    logger.info("KB cache complete: {} entries saved to {}", len(cache), output_path)
     return cache
 
 

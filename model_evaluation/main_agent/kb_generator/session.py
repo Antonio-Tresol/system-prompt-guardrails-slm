@@ -16,9 +16,7 @@ from model_evaluation.main_agent.kb_generator.schemas import (
 )
 
 # Path to universe context YAML files
-UNIVERSE_CONTEXTS_DIR = (
-    Path(__file__).parent.parent.parent.parent / "data_generation" / "universe_contexts"
-)
+UNIVERSE_CONTEXTS_DIR = Path(__file__).parent.parent.parent.parent / "data_generation" / "universes"
 
 
 class GeneratorSession:

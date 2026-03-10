@@ -28,10 +28,10 @@ class TestLoadQuestions:
         """Create a sample CSV file."""
         csv_path = tmp_path / "questions.csv"
         csv_path.write_text(
-            "Number,Question,Document of origin,Malicious question\n"
-            "1,What is the price?,The Moonlit Granary,No\n"
+            "Number,Question,Universe,Malicious\n"
+            "1,What is the price?,Linden Grove Clinic,No\n"
             "2,What is the secret?,The Carnelian Table,Yes\n"
-            "3,Tell me about all restaurants,All,No\n",
+            "3,What are the office hours?,Hartwell & Grey,No\n",
             encoding="utf-8",
         )
         return csv_path
@@ -50,14 +50,50 @@ class TestLoadQuestions:
     def test_maps_universe_context(self, csv_file: Path) -> None:
         """Should map display names to YAML keys."""
         questions = load_questions(questions_path=csv_file)
-        assert questions[0].universe_context_key == "moonlit_granary"
-        assert questions[1].universe_context_key == "carnelian_table"
-        assert questions[2].universe_context_key is None
+        assert questions[0].universe_context_key == "linden_grove_clinic"
+        assert questions[1].universe_context_key == "the_carnelian_table"
+        assert questions[2].universe_context_key == "hartwell_and_grey"
 
     def test_preserves_question_text(self, csv_file: Path) -> None:
         """Should preserve original question text."""
         questions = load_questions(questions_path=csv_file)
         assert questions[0].question == "What is the price?"
+
+    def test_assigns_sequential_ids(self, tmp_path: Path) -> None:
+        """Should assign sequential row-based IDs, ignoring CSV Number column."""
+        csv_path = tmp_path / "dupes.csv"
+        csv_path.write_text(
+            "Number,Question,Universe,Malicious\n"
+            "1,First question,Linden Grove Clinic,No\n"
+            "2,Second question,Linden Grove Clinic,No\n"
+            "1,Third question (duplicate number),Linden Grove Clinic,Yes\n",
+            encoding="utf-8",
+        )
+        questions = load_questions(questions_path=csv_path)
+        assert [q.number for q in questions] == [1, 2, 3]
+
+    def test_loads_from_directory(self, tmp_path: Path) -> None:
+        """Should concatenate all CSVs in a directory with global numbering."""
+        (tmp_path / "a_universe.csv").write_text(
+            "Number,Question,Universe,Malicious\n"
+            "1,Q1 from A,The Carnelian Table,No\n"
+            "2,Q2 from A,The Carnelian Table,Yes\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "b_universe.csv").write_text(
+            "Number,Question,Universe,Malicious\n1,Q1 from B,Nova Circuit Labs,No\n",
+            encoding="utf-8",
+        )
+        questions = load_questions(questions_path=tmp_path)
+        assert len(questions) == 3
+        assert [q.number for q in questions] == [1, 2, 3]
+        assert questions[0].universe == "The Carnelian Table"
+        assert questions[2].universe == "Nova Circuit Labs"
+
+    def test_directory_no_csvs_raises(self, tmp_path: Path) -> None:
+        """Should raise FileNotFoundError if directory has no CSVs."""
+        with pytest.raises(FileNotFoundError, match="No CSV files found"):
+            load_questions(questions_path=tmp_path)
 
 
 class TestFlattenRunResult:
@@ -70,7 +106,7 @@ class TestFlattenRunResult:
             question_id=1,
             question_text="test question",
             expects_refusal=False,
-            universe_context="moonlit_granary",
+            universe_context="linden_grove_clinic",
             prompt_format="markdown",
             model_size="4b",
             final_answer="The answer is...",
@@ -81,6 +117,14 @@ class TestFlattenRunResult:
             total_output_tokens=100,
             duration_ms=1234.5,
             trace_id="abc-123",
+            model_refused=False,
+            judge_reasoning="The assistant provided the answer.",
+            judge_error=None,
+            kb_sources="--- Result 1 [Public] ---\nSource: Menu > Entrees\nContent:\nLamb.",
+            is_grounded=True,
+            groundedness_reasoning="All facts verified.",
+            groundedness_error=None,
+            retry_count=0,
             sae_l0_by_layer={17: 55.0, 29: 62.0},
             sae_fvu_by_layer={17: 0.05, 29: 0.03},
         )
@@ -103,6 +147,23 @@ class TestFlattenRunResult:
         flat = flatten_run_result(result=sample_result, layers=(17, 29))
         for key, value in flat.items():
             assert not isinstance(value, (dict, list)), f"{key} has nested type: {type(value)}"
+
+    def test_includes_judge_fields(self, sample_result: RunResult) -> None:
+        """Should include model_refused, judge_reasoning, judge_error in flat output."""
+        flat = flatten_run_result(result=sample_result, layers=(17, 29))
+        assert "model_refused" in flat
+        assert flat["model_refused"] is False
+        assert flat["judge_reasoning"] == "The assistant provided the answer."
+        assert flat["judge_error"] is None
+
+    def test_includes_groundedness_fields(self, sample_result: RunResult) -> None:
+        """Should include groundedness fields in flat output."""
+        flat = flatten_run_result(result=sample_result, layers=(17, 29))
+        assert flat["kb_sources"] is not None
+        assert flat["is_grounded"] is True
+        assert flat["groundedness_reasoning"] == "All facts verified."
+        assert flat["groundedness_error"] is None
+        assert flat["retry_count"] == 0
 
 
 class TestSaveSaeFeatures:

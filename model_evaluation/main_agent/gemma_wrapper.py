@@ -9,11 +9,13 @@ as the SAE configuration is decoupled from the wrapper logic.
 """
 
 import ast
+import gc
 import logging
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+import torch
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -145,6 +147,16 @@ class GemmaWithSAE(BaseChatModel):
         self._bound_tools = [convert_to_openai_tool(tool) for tool in tools]
         return self
 
+    def _clear_activations(self) -> None:
+        """Free GPU memory held by previous SAE activations."""
+        del self._last_activations
+        del self._last_multi_layer_activations
+        self._last_activations = None
+        self._last_multi_layer_activations = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -172,6 +184,9 @@ class GemmaWithSAE(BaseChatModel):
         logger.debug("Formatted prompt length: %d chars", len(prompt))
         if len(prompt) < 1000:
             logger.debug("Prompt preview: %s", prompt)
+
+        # Free previous activations to release GPU memory
+        self._clear_activations()
 
         # Store input token count and update total
         input_ids = self._tokenizer.encode(prompt)

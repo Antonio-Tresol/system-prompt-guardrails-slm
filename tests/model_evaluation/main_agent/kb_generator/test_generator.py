@@ -27,16 +27,9 @@ from model_evaluation.main_agent.kb_generator.schemas import (
 
 
 @pytest.fixture
-def generator_session_no_tracing() -> GeneratorSession:
-    """Create a generator session for testing without tracing."""
-    agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
-    return GeneratorSession(agent=agent, checkpointer=checkpointer)
-
-
-@pytest.fixture
-def generator_session_with_tracing() -> GeneratorSession:
-    """Create a generator session with Langfuse tracing enabled."""
-    agent, checkpointer = create_kb_generator_agent(enable_tracing=True)
+def generator_session() -> GeneratorSession:
+    """Create a generator session for testing."""
+    agent, checkpointer = create_kb_generator_agent()
     return GeneratorSession(agent=agent, checkpointer=checkpointer)
 
 
@@ -179,7 +172,7 @@ class TestGeneratorSession:
 
     def test_session_has_unique_thread_id(self) -> None:
         """Test that each session gets a unique thread ID."""
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+        agent, checkpointer = create_kb_generator_agent()
         session1 = GeneratorSession(agent=agent, checkpointer=checkpointer)
         session2 = GeneratorSession(agent=agent, checkpointer=checkpointer)
 
@@ -188,7 +181,7 @@ class TestGeneratorSession:
 
     def test_session_reset_changes_thread_id(self) -> None:
         """Test that reset() creates a new thread_id, clearing history."""
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+        agent, checkpointer = create_kb_generator_agent()
         session = GeneratorSession(agent=agent, checkpointer=checkpointer)
 
         original_id = session.thread_id
@@ -202,7 +195,7 @@ class TestGeneratorSession:
         """Test that thread_id is a valid UUID string."""
         import uuid
 
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+        agent, checkpointer = create_kb_generator_agent()
         session = GeneratorSession(agent=agent, checkpointer=checkpointer)
 
         # Should not raise ValueError
@@ -220,7 +213,7 @@ class TestAgentFactory:
 
     def test_create_agent_without_tracing(self) -> None:
         """Test creating agent with tracing disabled."""
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+        agent, checkpointer = create_kb_generator_agent()
 
         assert agent is not None
         assert checkpointer is not None
@@ -230,14 +223,14 @@ class TestAgentFactory:
 
     def test_create_agent_with_tracing(self) -> None:
         """Test creating agent with Langfuse tracing enabled."""
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=True)
+        agent, checkpointer = create_kb_generator_agent()
 
         assert agent is not None
         assert checkpointer is not None
 
     def test_agent_has_correct_name(self) -> None:
         """Test that agent is named correctly for tracing identification."""
-        agent, _ = create_kb_generator_agent(enable_tracing=False)
+        agent, _ = create_kb_generator_agent()
         # The agent name is set in create_agent, check it's configured
         assert agent is not None
 
@@ -254,7 +247,7 @@ class TestEvaluationContext:
         """Test creating EvaluationContext with a generator session."""
         from model_evaluation.main_agent.tools import EvaluationContext
 
-        agent, checkpointer = create_kb_generator_agent(enable_tracing=False)
+        agent, checkpointer = create_kb_generator_agent()
         session = GeneratorSession(agent=agent, checkpointer=checkpointer)
 
         ctx = EvaluationContext(
@@ -272,62 +265,49 @@ class TestEvaluationContext:
 # =============================================================================
 
 
-class TestSearchKnowledgeBaseFormatting:
-    """Tests for the search_knowledge_base tool output formatting logic."""
+class TestFormatSources:
+    """Tests for GeneratorOutput.format_sources() method."""
 
     def test_format_single_public_chunk(self) -> None:
-        """Test formatting a single public chunk."""
-        chunk = DocumentChunk(
-            document_title="Italian Cuisine Guide",
-            section="Pasta Dishes",
-            subsection="Carbonara",
-            privacy_level="public",
-            content="Traditional carbonara uses guanciale, eggs, and pecorino.",
+        """Should format a single public chunk with privacy label and source."""
+        output = GeneratorOutput(
+            chunks=[
+                DocumentChunk(
+                    document_title="Italian Cuisine Guide",
+                    section="Pasta Dishes",
+                    subsection="Carbonara",
+                    privacy_level="public",
+                    content="Traditional carbonara uses guanciale, eggs, and pecorino.",
+                ),
+            ],
         )
 
-        # Replicate the formatting logic from tools.py
-        formatted_parts = []
-        for idx, c in enumerate([chunk], 1):
-            privacy_label = f"[{c.privacy_level.capitalize()}]"
-            header = f"--- Result {idx} {privacy_label} ---"
-            source = f"Source: {c.document_title} > {c.section}"
-            if c.subsection:
-                source += f" > {c.subsection}"
-            formatted_parts.append(f"{header}\n{source}\nContent:\n{c.content}\n")
-
-        result = "\n".join(formatted_parts)
+        result = output.format_sources()
 
         assert "--- Result 1 [Public] ---" in result
         assert "Source: Italian Cuisine Guide > Pasta Dishes > Carbonara" in result
         assert "Traditional carbonara" in result
 
     def test_format_multiple_chunks_with_different_privacy(self) -> None:
-        """Test formatting multiple chunks with different privacy levels."""
-        chunks = [
-            DocumentChunk(
-                document_title="Company Handbook",
-                section="Public Info",
-                privacy_level="public",
-                content="Our office hours are 9-5.",
-            ),
-            DocumentChunk(
-                document_title="Company Handbook",
-                section="HR Data",
-                privacy_level="private",
-                content="CEO salary: $500,000.",
-            ),
-        ]
+        """Should number chunks and include correct privacy labels."""
+        output = GeneratorOutput(
+            chunks=[
+                DocumentChunk(
+                    document_title="Company Handbook",
+                    section="Public Info",
+                    privacy_level="public",
+                    content="Our office hours are 9-5.",
+                ),
+                DocumentChunk(
+                    document_title="Company Handbook",
+                    section="HR Data",
+                    privacy_level="private",
+                    content="CEO salary: $500,000.",
+                ),
+            ],
+        )
 
-        formatted_parts = []
-        for idx, c in enumerate(chunks, 1):
-            privacy_label = f"[{c.privacy_level.capitalize()}]"
-            header = f"--- Result {idx} {privacy_label} ---"
-            source = f"Source: {c.document_title} > {c.section}"
-            if c.subsection:
-                source += f" > {c.subsection}"
-            formatted_parts.append(f"{header}\n{source}\nContent:\n{c.content}\n")
-
-        result = "\n".join(formatted_parts)
+        result = output.format_sources()
 
         assert "[Public]" in result
         assert "[Private]" in result
@@ -335,20 +315,40 @@ class TestSearchKnowledgeBaseFormatting:
         assert "Result 2" in result
 
     def test_format_chunk_without_subsection(self) -> None:
-        """Test formatting chunk without subsection."""
-        chunk = DocumentChunk(
-            document_title="Simple Doc",
-            section="Main Section",
-            privacy_level="mixed",
-            content="Some mixed content.",
+        """Should omit subsection from source path when not present."""
+        output = GeneratorOutput(
+            chunks=[
+                DocumentChunk(
+                    document_title="Simple Doc",
+                    section="Main Section",
+                    privacy_level="mixed",
+                    content="Some mixed content.",
+                ),
+            ],
         )
 
-        source = f"Source: {chunk.document_title} > {chunk.section}"
-        if chunk.subsection:
-            source += f" > {chunk.subsection}"
+        result = output.format_sources()
 
-        assert source == "Source: Simple Doc > Main Section"
-        assert ">" not in source[source.rfind("Section") :]  # No trailing >
+        assert "Source: Simple Doc > Main Section" in result
+        source_line = [line for line in result.split("\n") if line.startswith("Source:")][0]
+        assert source_line == "Source: Simple Doc > Main Section"
+
+    def test_format_capitalizes_privacy_levels(self) -> None:
+        """Should capitalize privacy level labels."""
+        output = GeneratorOutput(
+            chunks=[
+                DocumentChunk(
+                    document_title="Doc",
+                    section="Sec",
+                    privacy_level="private",
+                    content="Test.",
+                ),
+            ],
+        )
+
+        result = output.format_sources()
+        assert "[Private]" in result
+        assert "[private]" not in result
 
 
 # =============================================================================
@@ -365,10 +365,10 @@ class TestGeneratorIntegration:
 
     def test_generates_public_docs_when_flag_false(
         self,
-        generator_session_no_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that public mode generates only public documents."""
-        output = generator_session_no_tracing.generate(
+        output = generator_session.generate(
             query="What are the menu items at the Italian restaurant?",
             include_private_info=False,
         )
@@ -382,10 +382,10 @@ class TestGeneratorIntegration:
 
     def test_generates_private_docs_when_flag_true(
         self,
-        generator_session_no_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that private mode generates private/mixed documents."""
-        output = generator_session_no_tracing.generate(
+        output = generator_session.generate(
             query="What are the employee salaries and internal costs?",
             include_private_info=True,
         )
@@ -400,18 +400,18 @@ class TestGeneratorIntegration:
 
     def test_maintains_coherence_across_calls(
         self,
-        generator_session_no_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that the generator maintains coherence across multiple calls."""
         # First call - establish context about a specific restaurant
-        output1 = generator_session_no_tracing.generate(
+        output1 = generator_session.generate(
             query="Tell me about the Italian restaurant called Bella Notte in downtown",
             include_private_info=False,
         )
         assert len(output1.chunks) >= 1
 
         # Second call - ask follow-up, should reference same restaurant
-        output2 = generator_session_no_tracing.generate(
+        output2 = generator_session.generate(
             query="What pasta dishes does this restaurant serve?",
             include_private_info=False,
         )
@@ -427,20 +427,20 @@ class TestGeneratorIntegration:
 
     def test_reset_clears_conversation_context(
         self,
-        generator_session_no_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that reset() clears conversation history."""
         # Establish context
-        generator_session_no_tracing.generate(
+        generator_session.generate(
             query="Tell me about Sushi Palace restaurant",
             include_private_info=False,
         )
 
         # Reset the session
-        generator_session_no_tracing.reset()
+        generator_session.reset()
 
         # New query after reset - agent should not remember previous context
-        output = generator_session_no_tracing.generate(
+        output = generator_session.generate(
             query="What are the appetizers?",
             include_private_info=False,
         )
@@ -452,10 +452,10 @@ class TestGeneratorIntegration:
 
     def test_generates_realistic_content_length(
         self,
-        generator_session_no_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that generated content meets the 100-300 word guideline."""
-        output = generator_session_no_tracing.generate(
+        output = generator_session.generate(
             query="Describe the research methodology in the AI safety paper",
             include_private_info=False,
         )
@@ -472,10 +472,10 @@ class TestTracingIntegration:
 
     def test_tracing_enabled_agent_works(
         self,
-        generator_session_with_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that agent with tracing enabled still functions correctly."""
-        output = generator_session_with_tracing.generate(
+        output = generator_session.generate(
             query="What are the opening hours of the cafe?",
             include_private_info=False,
         )
@@ -492,11 +492,11 @@ class TestTracingIntegration:
 
     def test_tracing_enabled_respects_privacy_flag(
         self,
-        generator_session_with_tracing: GeneratorSession,
+        generator_session: GeneratorSession,
     ) -> None:
         """Test that tracing doesn't interfere with privacy flag behavior."""
         # Test private mode with tracing
-        output = generator_session_with_tracing.generate(
+        output = generator_session.generate(
             query="What is the internal budget breakdown?",
             include_private_info=True,
         )

@@ -17,7 +17,6 @@ dependencies = [
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.3.12",
     "langchain-openai>=1.0.1",
-    "langfuse>=3.8.1",
     "langgraph>=1.0.2",
     "loguru>=0.7.3",
     "matplotlib>=3.10.7",
@@ -30,6 +29,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "safetensors>=0.4.0",
     "seaborn>=0.13.2",
+    "statsmodels>=0.14.6",
     "tiktoken>=0.12.0",
     "torch>=2.6.0",
     "transformers>=4.57.3",
@@ -38,6 +38,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "langgraph-cli[inmem]>=0.1.55",
+    "nbclient>=0.10.4",
     "pyrefly>=0.38.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
@@ -45,11 +46,9 @@ dev = [
 ]
 
 [project.scripts]
-generate_corpus = "data_generation.generate_data:main"
-generate_questions = "model_evaluation.question_generator.cli:main"
-build_knowledge_base = "knowledge_base.main:main"
 mi_sml_agent = "model_evaluation.chat:main"
 run_evaluation = "model_evaluation.evaluation.cli:main"
+judge_results = "model_evaluation.evaluation.judge_cli:main"
 
 [tool.uv]
 package = true
@@ -72,6 +71,7 @@ include = ["data_generation*", "knowledge_base*", "utils*", "model_evaluation*"]
 
 [tool.pytest.ini_options]
 markers = ["integration: marks tests as integration tests (require API calls)"]
+addopts = "-m 'not integration'"
 asyncio_mode = "auto"
 
 [tool.ruff]
@@ -99,6 +99,7 @@ exclude = [
     "dist",
     "node_modules",
     "model_evaluation/examples",
+    ".claude",
 ]
 
 [tool.ruff.lint]

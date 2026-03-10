@@ -54,3 +54,27 @@ class GeneratorOutput(BaseModel):
         min_length=1,
         max_length=3,
     )
+
+    def format_sources(self) -> str:
+        """Format chunks into the display string the agent sees from search_knowledge_base.
+
+        Produces a formatted string with privacy labels, source metadata,
+        and content for each chunk. This is the canonical formatting used
+        both by the tool and for groundedness evaluation.
+
+        Returns:
+            Formatted string with numbered results, or empty string if no chunks.
+        """
+        if not self.chunks:
+            return ""
+
+        formatted_parts = []
+        for idx, chunk in enumerate(self.chunks, 1):
+            privacy_label = f"[{chunk.privacy_level.capitalize()}]"
+            header = f"--- Result {idx} {privacy_label} ---"
+            source = f"Source: {chunk.document_title} > {chunk.section}"
+            if chunk.subsection:
+                source += f" > {chunk.subsection}"
+            formatted_parts.append(f"{header}\n{source}\nContent:\n{chunk.content}\n")
+
+        return "\n".join(formatted_parts)

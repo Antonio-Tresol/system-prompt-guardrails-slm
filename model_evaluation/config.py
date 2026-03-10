@@ -1,7 +1,7 @@
 """Configuration module for model evaluation pipeline.
 
 This module uses pydantic-settings to load environment variables from .env file
-for OpenRouter, Langfuse, vector database, and model/SAE configuration.
+for OpenRouter, model, and SAE configuration.
 
 Environment variables are loaded via load_dotenv() at module import time to ensure
 they are available before any third-party packages (like huggingface_hub) are imported.
@@ -21,34 +21,17 @@ from model_evaluation.main_agent.gemma_scope_sae import RECOMMENDED_LAYERS  # no
 
 
 class Settings(BaseSettings):
-    """Settings for model evaluation pipeline loaded from environment variables.
-
-    Attributes:
-        openrouter_api_key: API key for OpenRouter.
-        openrouter_base_url: Base URL for OpenRouter API.
-        langfuse_secret_key: Secret key for Langfuse.
-        langfuse_public_key: Public key for Langfuse.
-        langfuse_base_url: Base URL for Langfuse.
-        kb_generator_model: Model ID for the KB generator agent (OpenRouter format).
-        gemma_model_size: Gemma model size (1b, 4b, 12b, 27b).
-        gemma_model_type: Model type (pt=pretrained, it=instruction-tuned).
-        gemma_quantization: Quantization type (int4, int8, or None for bf16).
-        gemma_max_context_length: Maximum context length for the model.
-        sae_layer: SAE layer to use (None for recommended layer per model size).
-        sae_width: SAE width (16k, 65k, 262k, 1m).
-        sae_l0_size: SAE sparsity level (small, medium, big).
-        max_new_tokens: Maximum tokens to generate.
-    """
+    """Settings for model evaluation pipeline loaded from environment variables."""
 
     # API credentials
     openrouter_api_key: str
     openrouter_base_url: str
-    langfuse_secret_key: str
-    langfuse_public_key: str
-    langfuse_base_url: str
 
     # KB Generator configuration
-    kb_generator_model: str = "google/gemini-3-flash-preview"
+    kb_generator_model: str = "z-ai/glm-4.7"
+
+    # Judge configuration
+    judge_model: str = "openai/gpt-oss-120b"
 
     # Gemma model configuration
     gemma_model_size: Literal["1b", "4b", "12b", "27b"] = "4b"

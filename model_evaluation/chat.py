@@ -9,9 +9,9 @@ Usage:
 
 Model Selection:
     On startup, choose from:
-    1. Gemma 3 4B IT (bf16) - Full precision (VRAM calculated dynamically)
-    2. Gemma 3 4B IT (int4) - 4-bit quantized (VRAM calculated dynamically)
-    3. Gemma 3 12B IT (int4) - Larger model, 4-bit quantized (VRAM calculated dynamically)
+    1. Gemma 3 1B IT (bf16) - Ultra-lightweight
+    2. Gemma 3 4B IT (bf16) - Balanced speed/quality
+    3. Gemma 3 12B IT (bf16) - High quality, more VRAM
 
 Commands:
     /quit, /exit, /q - Exit the chat
@@ -24,7 +24,7 @@ Commands:
     /stats - Show session statistics
     /help - Show available commands
     /qs, /questions - Browse test questions
-    /ask <id> - Send a specific question (e.g., /ask p15, /ask s7m)
+    /ask <id> - Send a specific question (e.g., /ask ct1, /ask hg5m)
     /random - Send a random question
 """
 
@@ -50,6 +50,7 @@ from langchain_core.messages import (
 # Import config first - it loads .env at module import time, ensuring env vars
 # (like HF_HUB_DISABLE_SYMLINKS_WARNING) are set before huggingface_hub is imported.
 from model_evaluation.config import Settings
+from model_evaluation.evaluation.schemas import DISPLAY_NAME_TO_YAML_KEY
 from model_evaluation.main_agent.gemma_model_loader import (
     GemmaModelConfig,
     MemoryTracker,
@@ -65,10 +66,25 @@ from model_evaluation.main_agent.kb_generator import (
 from model_evaluation.main_agent.rag_agent import (
     MARKDOWN_SYSTEM_PROMPT,
     PLAIN_SYSTEM_PROMPT,
-    create_safety_agent_with_tracing,
+    create_safety_agent,
 )
 from model_evaluation.main_agent.tools import EvaluationContext
 from model_evaluation.tracing import AgentTrace, TrajectoryCapture
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Question ID Prefix Mapping
+# ═══════════════════════════════════════════════════════════════════════════════
+
+QUESTIONS_DIR = Path(__file__).parent.parent / "data_generation" / "questions"
+
+UNIVERSE_PREFIXES: dict[str, str] = {
+    "The Carnelian Table": "ct",
+    "Hartwell & Grey": "hg",
+    "Linden Grove Clinic": "lg",
+    "Nova Circuit Labs": "nc",
+}
+
+PREFIX_TO_UNIVERSE: dict[str, str] = {v: k for k, v in UNIVERSE_PREFIXES.items()}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Terminal & ANSI Utilities
@@ -1188,7 +1204,8 @@ def display_commands_help() -> None:
         ("/qs", "Browse test questions", "questions"),
         ("/qs refusal", "Filter to refusal questions", None),
         ("/qs non-refusal", "Filter to non-refusal questions", None),
-        ("/ask <id>", "Send question (e.g., /ask s7m, /ask s1)", None),
+        ("/qs ct|hg|lg|nc", "Filter by universe", None),
+        ("/ask <id>", "Send question (e.g., /ask ct1, /ask hg5m)", None),
         ("/random", "Send a random question", None),
         ("/random refusal", "Send a random refusal question", None),
     ]
@@ -1231,14 +1248,13 @@ class Question:
     number: int
     text: str
     is_malicious: bool
-    category: str  # "papers" or "synthetic"
-    origin: str | None = None  # For papers questions (legacy)
-    universe_context: str | None = None  # For synthetic questions (new format)
+    universe: str
+    universe_key: str
 
     @property
     def id(self) -> str:
-        """Generate unique ID like 'p15' or 's7m'."""
-        prefix = "p" if self.category == "papers" else "s"
+        """Generate unique ID like 'ct1' or 'hg5m'."""
+        prefix = UNIVERSE_PREFIXES.get(self.universe, "??")
         suffix = "m" if self.is_malicious else ""
         return f"{prefix}{self.number}{suffix}"
 
@@ -1256,58 +1272,42 @@ class QuestionBank:
         self._load_questions(questions_dir=questions_dir)
 
     def _load_questions(self, *, questions_dir: Path) -> None:
-        """Load questions from CSV files.
+        """Load questions from all CSV files in the directory.
 
-        Supports both legacy format (Document of origin, Malicious question)
-        and new format (Universe Context, Is Refusal).
+        Expects CSV columns: Number, Question, Universe, Malicious.
 
         Args:
             questions_dir: Path to the directory containing question CSV files.
         """
-        csv_files = [
-            ("papers_questions.csv", "papers"),
-            ("synthetic_questions.csv", "synthetic"),
-        ]
-
-        for filename, category in csv_files:
-            filepath = questions_dir / filename
-            if not filepath.exists():
-                continue
-
-            with open(filepath, encoding="utf-8") as f:
+        for csv_file in sorted(questions_dir.glob("*.csv")):
+            with open(csv_file, encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # Detect format based on available columns
-                    if "Universe Context" in row:
-                        # New format (synthetic questions)
-                        question = Question(
+                    universe_name = row["Universe"].strip()
+                    universe_key = DISPLAY_NAME_TO_YAML_KEY.get(
+                        universe_name,
+                        universe_name.lower().replace(" ", "_"),
+                    )
+                    self.questions.append(
+                        Question(
                             number=int(row["Number"]),
                             text=row["Question"].strip(),
-                            is_malicious=row["Is Refusal"].strip().lower() == "yes",
-                            category=category,
-                            universe_context=row["Universe Context"].strip(),
-                        )
-                    else:
-                        # Legacy format (papers questions)
-                        question = Question(
-                            number=int(row["Number"]),
-                            text=row["Question"].strip(),
-                            origin=row["Document of origin"].strip(),
-                            is_malicious=row["Malicious question"].strip().lower() == "yes",
-                            category=category,
-                        )
-                    self.questions.append(question)
+                            is_malicious=row["Malicious"].strip().lower() == "yes",
+                            universe=universe_name,
+                            universe_key=universe_key,
+                        ),
+                    )
 
     def filter(
         self,
         *,
-        category: str | None = None,
+        universe: str | None = None,
         malicious: bool | None = None,
     ) -> list[Question]:
         """Filter questions by criteria.
 
         Args:
-            category: Filter by category ("papers" or "synthetic"), or None for all.
+            universe: Filter by universe display name or YAML key, or None for all.
             malicious: Filter by malicious status, or None for all.
 
         Returns:
@@ -1315,8 +1315,8 @@ class QuestionBank:
         """
         result = self.questions
 
-        if category is not None:
-            result = [q for q in result if q.category == category]
+        if universe is not None:
+            result = [q for q in result if q.universe == universe or q.universe_key == universe]
 
         if malicious is not None:
             result = [q for q in result if q.is_malicious == malicious]
@@ -1327,23 +1327,26 @@ class QuestionBank:
         """Get a question by its unique ID.
 
         Args:
-            question_id: Question ID like 'p15', 's7m', 'p1m', etc.
+            question_id: Question ID like 'ct1', 'hg5m', 'lg10', 'nc30m'.
 
         Returns:
             The matching question, or None if not found.
         """
-        # Parse ID format: prefix (p/s) + number + optional 'm' suffix
-        match = re.match(r"^([ps])(\d+)(m?)$", question_id.lower())
+        prefixes_pattern = "|".join(PREFIX_TO_UNIVERSE.keys())
+        match = re.match(rf"^({prefixes_pattern})(\d+)(m?)$", question_id.lower())
         if not match:
             return None
 
         prefix, number_str, suffix = match.groups()
-        category = "papers" if prefix == "p" else "synthetic"
+        universe = PREFIX_TO_UNIVERSE.get(prefix)
+        if universe is None:
+            return None
+
         number = int(number_str)
         is_malicious = suffix == "m"
 
         for q in self.questions:
-            if q.category == category and q.number == number and q.is_malicious == is_malicious:
+            if q.universe == universe and q.number == number and q.is_malicious == is_malicious:
                 return q
 
         return None
@@ -1351,19 +1354,19 @@ class QuestionBank:
     def random(
         self,
         *,
-        category: str | None = None,
+        universe: str | None = None,
         malicious: bool | None = None,
     ) -> Question | None:
         """Get a random question matching criteria.
 
         Args:
-            category: Filter by category, or None for all.
+            universe: Filter by universe, or None for all.
             malicious: Filter by malicious status, or None for all.
 
         Returns:
             A random question matching criteria, or None if no matches.
         """
-        filtered = self.filter(category=category, malicious=malicious)
+        filtered = self.filter(universe=universe, malicious=malicious)
         if not filtered:
             return None
         return random.choice(filtered)  # noqa: S311
@@ -1375,7 +1378,7 @@ class QuestionBrowserState:
 
     page: int = 1
     page_size: int = 10
-    category: str | None = None
+    universe: str | None = None
     malicious: bool | None = None
 
 
@@ -1400,8 +1403,8 @@ def display_questions_browser(
 
     # Build filter description
     filters = []
-    if state.category:
-        filters.append(state.category)
+    if state.universe:
+        filters.append(state.universe)
     else:
         filters.append("all")
     if state.malicious is True:
@@ -1421,7 +1424,10 @@ def display_questions_browser(
     print(f"  {styled('─' * 100, Colors.DIM)}")
 
     # Table Header
-    header = f" {styled('ID', Colors.BOLD):<6} │ {styled('Question', Colors.BOLD):<68} │ {styled('Universe Context', Colors.BOLD)}"
+    id_col = styled("ID", Colors.BOLD)
+    q_col = styled("Question", Colors.BOLD)
+    u_col = styled("Universe", Colors.BOLD)
+    header = f" {id_col:<6} │ {q_col:<68} │ {u_col}"
     print(header)
     print(f"  {styled('─' * 100, Colors.DIM)}")
 
@@ -1453,9 +1459,8 @@ def display_questions_browser(
         # Question Column (truncate if too long)
         q_text = (q.text[:65] + "...") if len(q.text) > 65 else q.text
 
-        # Universe Context Column
-        # Use universe_context if available, otherwise fallback to legacy origin or "Unknown"
-        context_text = q.universe_context or q.origin or "Unknown"
+        # Universe Column
+        context_text = q.universe
         context_text = (context_text[:20] + "...") if len(context_text) > 20 else context_text
 
         print(f" {styled(id_text, id_style)} │ {q_text:<68} │ {styled(context_text, Colors.DIM)}")
@@ -1657,19 +1662,8 @@ def display_question_detail(*, question: Question) -> None:
 
     # Metadata fields with word-wrapping
     _print_wrapped_field(
-        label="Category:",
-        value=question.category.capitalize(),
-        border_color=border_color,
-        value_color=BRAND_INFO,
-        content_width=content_width,
-    )
-
-    # Show origin or universe context depending on question type
-    source_label = "Universe:" if question.universe_context else "Origin:"
-    source_value = question.universe_context or question.origin or "Unknown"
-    _print_wrapped_field(
-        label=source_label,
-        value=source_value,
+        label="Universe:",
+        value=question.universe,
         border_color=border_color,
         value_color=BRAND_INFO,
         content_width=content_width,
@@ -2115,7 +2109,7 @@ def count_tokens(model: GemmaWithSAE, text: str) -> int:
 def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     """Run the interactive chat loop with streaming support."""
     tracer = TrajectoryCapture()
-    agent = create_safety_agent_with_tracing(
+    agent = create_safety_agent(
         model,
         use_markdown_rules=use_markdown,
         middleware=[tracer],
@@ -2123,7 +2117,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
     # Initialize KB Generator session for the search_knowledge_base tool
     print(f"\n  {styled('Initializing KB Generator Agent...', Colors.DIM)}")
-    generator_agent, generator_checkpointer = create_kb_generator_agent(enable_tracing=True)
+    generator_agent, generator_checkpointer = create_kb_generator_agent()
     generator_session = GeneratorSession(
         agent=generator_agent,
         checkpointer=generator_checkpointer,
@@ -2136,8 +2130,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
     stats.system_prompt_tokens = count_tokens(model, system_prompt)
 
     # Initialize question bank
-    questions_dir = Path(__file__).parent / "questions"
-    question_bank = QuestionBank(questions_dir=questions_dir)
+    question_bank = QuestionBank(questions_dir=QUESTIONS_DIR)
     browser_state = QuestionBrowserState()
 
     # Display mode header
@@ -2230,7 +2223,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             continue
 
         if cmd == "/markdown":
-            agent = create_safety_agent_with_tracing(
+            agent = create_safety_agent(
                 model,
                 use_markdown_rules=True,
                 middleware=[tracer],
@@ -2243,7 +2236,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             continue
 
         if cmd == "/plain":
-            agent = create_safety_agent_with_tracing(
+            agent = create_safety_agent(
                 model,
                 use_markdown_rules=False,
                 middleware=[tracer],
@@ -2272,7 +2265,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
         # Question browser commands
         if cmd in ("/qs", "/questions"):
             filtered = question_bank.filter(
-                category=browser_state.category,
+                universe=browser_state.universe,
                 malicious=browser_state.malicious,
             )
             display_questions_browser(questions=filtered, state=browser_state)
@@ -2286,11 +2279,8 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                 browser_state.page += 1
             elif subcommand == "prev":
                 browser_state.page = max(1, browser_state.page - 1)
-            elif subcommand == "papers":
-                browser_state.category = "papers"
-                browser_state.page = 1
-            elif subcommand == "synthetic":
-                browser_state.category = "synthetic"
+            elif subcommand in PREFIX_TO_UNIVERSE:
+                browser_state.universe = PREFIX_TO_UNIVERSE[subcommand]
                 browser_state.page = 1
             elif subcommand == "refusal":
                 browser_state.malicious = True
@@ -2299,7 +2289,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                 browser_state.malicious = False
                 browser_state.page = 1
             elif subcommand == "all":
-                browser_state.category = None
+                browser_state.universe = None
                 browser_state.malicious = None
                 browser_state.page = 1
             else:
@@ -2309,7 +2299,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
                 continue
 
             filtered = question_bank.filter(
-                category=browser_state.category,
+                universe=browser_state.universe,
                 malicious=browser_state.malicious,
             )
             display_questions_browser(questions=filtered, state=browser_state)
@@ -2320,7 +2310,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
             parts = cmd.split()
             if len(parts) < 2:
                 cross = styled(ICONS["cross"], BRAND_ERROR)
-                err_msg = styled("Usage: /ask <id> (e.g., /ask p15, /ask s7m)", BRAND_ERROR)
+                err_msg = styled("Usage: /ask <id> (e.g., /ask ct1, /ask hg5m)", BRAND_ERROR)
                 print(f"\n  {cross} {err_msg}")
                 continue
 
@@ -2341,20 +2331,18 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
         if cmd.startswith("/random"):
             parts = cmd.split()
             malicious_filter: bool | None = None
-            category_filter: str | None = None
+            universe_filter: str | None = None
 
             for part in parts[1:]:
                 if part == "refusal":
                     malicious_filter = True
                 elif part == "non-refusal":
                     malicious_filter = False
-                elif part == "papers":
-                    category_filter = "papers"
-                elif part == "synthetic":
-                    category_filter = "synthetic"
+                elif part in PREFIX_TO_UNIVERSE:
+                    universe_filter = PREFIX_TO_UNIVERSE[part]
 
             question = question_bank.random(
-                category=category_filter,
+                universe=universe_filter,
                 malicious=malicious_filter,
             )
             if question is None:
@@ -2382,7 +2370,7 @@ def run_chat(model: GemmaWithSAE, *, use_markdown: bool = True) -> None:
 
             # Use streaming mode for real-time output (including custom events)
             # Pass universe context if we have a question with one
-            universe_ctx = current_question.universe_context if current_question else None
+            universe_ctx = current_question.universe if current_question else None
             eval_context = EvaluationContext(
                 include_private_info=include_private_info,
                 generator_session=generator_session,
