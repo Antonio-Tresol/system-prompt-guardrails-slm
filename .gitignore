@@ -239,3 +239,7 @@ gemmascope2_paper.md
 model_evaluation/evaluation_results/
 results/*/sae_features/
 results/*/traces/
+
+# Scratch / temp files
+_temp*
+_verify*
