@@ -1,104 +1,131 @@
-# safety-prompts-for-slm
+# Safety Prompts for Small Language Models
 
-An experiment setup to test safety prompts for small language models (SLMs). This project generates synthetic data to evaluate how SLMs handle distinctions between public and restricted content given safety prompts in different formats.
+Does Markdown formatting in system prompts improve privacy-refusal behaviour in small language models? This project tests that hypothesis on **Gemma 3 (4B and 12B)** deployed as RAG agents, with mechanistic interpretability analysis via Gemma Scope 2 sparse autoencoders.
+
+## Key Findings
+
+- Markdown formatting significantly improved **verbal refusal** in the 12B model (*p* = 0.003), but the effect was absent in the 4B model.
+- **48-75% of verbal refusals still leak private information**, revealing a comprehension-execution gap: formatting improves the tendency to refuse but not the ability to suppress private content during generation.
+- The 4B model's failures are predominantly comprehension failures (label blindness), while the 12B model's are execution failures (leakage despite acknowledged privacy labels).
 
 ## Project Structure
 
 ```
 safety-prompts-for-slm/
-├── data_generation/         # Synthetic data generation pipeline
-│   ├── agents.py           # Agent definitions (simple & deep)
-│   ├── config.py           # Pydantic settings for env vars
-│   ├── constants.py        # Model lists, themes, defaults
-│   ├── generate_data.py    # Main CLI script
-│   ├── internal_prompts.py # System prompt templates
-│   ├── utils.py            # Helper functions
-│   ├── prompts/            # Prompt templates
-│   └── outputs/            # Generated files (git-ignored)
-├── pyproject.toml          # Project configuration
-├── README.md               # This file
-└── langgraph.json          # Studio configuration
+├── model_evaluation/       # RAG agent, evaluation pipeline, SAE integration, tracing
+├── data_generation/        # Synthetic universes (YAML), evaluation questions (CSV), prompts
+├── paper/                  # LaTeX paper, analysis scripts, trace analysis, validation
+├── results/                # Evaluation outputs (results.csv, traces, SAE features)
+├── tests/                  # pytest suite
+└── utils/                  # Shared logging utilities
 ```
 
 ## Setup
 
-### 0. Install UV (if not already installed)
+### Prerequisites
 
-Follow the instructions in the official docs: [uv installation](https://docs.astral.sh/uv/getting-started/installation/).
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+- Python 3.12+
+- CUDA-capable GPU (for local Gemma inference)
+- Docker (for paper compilation only)
 
-### 1. Install Dependencies
+### Install
 
 ```bash
 uv sync
-```
-
-### 2. Configure Environment Variables
-
-```bash
 cp .env.example .env
+# Edit .env with your OpenRouter API key
 ```
 
-Edit `.env` with your credentials:
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` | Yes | API key for [OpenRouter](https://openrouter.ai) |
+| `OPENROUTER_BASE_URL` | Yes | `https://openrouter.ai/api/v1` |
+| `HF_TOKEN` | No | HuggingFace token for gated Gemma models |
+| `GEMMA_MODEL_SIZE` | No | `4b` (default), `12b` |
+
+See `model_evaluation/config.py` for all configuration options.
+
+## Usage
+
+### Interactive Chat
 
 ```bash
-# OpenRouter (for LLM API access)
-OPENROUTER_API_KEY=your_key
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
+uv run mi_sml_agent
 ```
 
-## Components
+Chat with the safety agent in the terminal. Useful for testing prompts and observing refusal/compliance behaviour.
 
-### Data Generation Pipeline
-
-The core component for generating synthetic data. See [data_generation/README.md](data_generation/README.md) for detailed usage.
-
-**Quick start:**
-```bash
-uv run generate_corpus
-```
-### Knowledge Base Ingestion Pipeline
-Ingests generated data into a vector database with privacy detection. See [knowledge_base/README.md](knowledge_base/README.md) for details.
-
-**Quick start:**
-```bash
-uv run build_knowledge_base
-```
-
-### Utils
-Common utilities for logging and other shared functionality.
-
-## Development
-
-### Quality Checks
-
-Run all quality checks before committing:
+### Run Evaluation
 
 ```bash
-uv run ruff check --fix .
-uv run ruff format .
-uv run pyrefly check
+# Run the full MD vs Plain evaluation
+uv run run_evaluation --model-size 4b
+
+# With groundedness checking
+uv run run_evaluation --model-size 12b --check-groundedness --max-groundedness-retries 2
+
+# Resume an interrupted run
+uv run run_evaluation --model-size 4b --resume
+
+# Backfill judge classifications on existing results
+uv run judge_results --results results/4b/results.csv
 ```
 
-### Run Tests
+Results are saved to `results/<model_size>/` with per-question CSVs, agent trajectory JSONs, and SAE feature activations.
+
+### Paper
+
+The paper is LaTeX compiled with LuaLaTeX via Docker:
 
 ```bash
-uv run pytest tests/
+cd paper
+docker run --rm -v "$(pwd -W):/work" -w //work texlive/texlive latexmk -outdir=out main.tex
 ```
 
-### Testing Agents with LangGraph Studio
-
-Test agents interactively:
+Reproduce all statistical results cited in the paper:
 
 ```bash
-uv run langgraph dev --allow-blocking
+uv run python -m paper.scripts.run_all
 ```
 
-This starts a local development server at `http://localhost:2024`. The `--allow-blocking` flag is required for proper `.env` file loading.
+See [`paper/CLAUDE.md`](paper/CLAUDE.md) for detailed paper infrastructure documentation.
 
 ## Architecture
 
-- **LLM Provider**: OpenRouter (supports multiple models)
-- **Agent Framework**: LangGraph with Deep Agents
-- **Configuration**: Pydantic Settings with automatic .env loading
-- **Quality**: Ruff (linting/formatting) + Pyrefly (type checking)
+The evaluation pipeline consists of:
+
+1. **Safety Agent** (`model_evaluation/main_agent/rag_agent.py`) — LangGraph agent with `think` and `search_knowledge_base` tools, configurable system prompt format (Markdown vs Plain)
+2. **KB Generator** (`model_evaluation/main_agent/kb_generator/`) — Dynamically generates document chunks with privacy-level metadata per query (not a static vector store)
+3. **GemmaWithSAE** (`model_evaluation/main_agent/gemma_wrapper.py`) — Custom LangChain `BaseChatModel` wrapping Gemma 3 with Gemma Scope 2 SAE hooks for mechanistic analysis
+4. **LLM-as-Judge** (`model_evaluation/evaluation/judge.py`) — Classifies agent responses as refusal/compliance and evaluates groundedness
+5. **Trajectory Capture** (`model_evaluation/tracing/`) — Records full agent trajectories for qualitative analysis
+
+### Data Generation
+
+Four synthetic "universes" (restaurant, law firm, medical clinic, tech startup) each define clearly separated public and private information in YAML. 150 evaluation questions per universe (75 public + 75 malicious) test whether the agent correctly refuses private information requests. See [`data_generation/README.md`](data_generation/README.md).
+
+## Development
+
+```bash
+uv run ruff check --fix .    # Lint
+uv run ruff format .         # Format
+uv run pytest                # Test
+```
+
+### CI
+
+GitHub Actions runs ruff, pyrefly type checking, and pytest on all PRs and pushes to `main`.
+
+## Tech Stack
+
+- **Python 3.12+** with **uv**
+- **LangChain / LangGraph** for agent orchestration
+- **Transformers / PyTorch** for Gemma 3 inference
+- **Gemma Scope 2 SAEs** for interpretability
+- **OpenRouter** for KB generation and LLM-as-judge
+- **Pydantic Settings** for configuration
+- **Ruff** + **Pyrefly** for code quality
+- **pytest** for testing

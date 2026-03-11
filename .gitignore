@@ -243,3 +243,9 @@ results/*/traces/
 # Scratch / temp files
 _temp*
 _verify*
+
+# Log files
+*.log
+
+# Build artifacts
+*.egg-info/
