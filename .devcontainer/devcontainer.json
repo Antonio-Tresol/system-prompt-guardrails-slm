@@ -1,0 +1,32 @@
+{
+  "name": "LaTeX Paper",
+  "image": "texlive/texlive:latest",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "James-Yu.latex-workshop",
+        "streetsidesoftware.code-spell-checker"
+      ],
+      "settings": {
+        "latex-workshop.latex.recipes": [
+          {
+            "name": "latexmk (lualatex)",
+            "tools": ["latexmk"]
+          }
+        ],
+        "latex-workshop.latex.tools": [
+          {
+            "name": "latexmk",
+            "command": "latexmk",
+            "args": ["-outdir=%OUTDIR%", "%DOC%"],
+            "env": {}
+          }
+        ],
+        "latex-workshop.latex.recipe.default": "latexmk (lualatex)",
+        "latex-workshop.latex.autoBuild.run": "onSave",
+        "latex-workshop.latex.outDir": "%DIR%/out"
+      }
+    }
+  },
+  "postCreateCommand": "apt-get update && apt-get install -y wget && mkdir -p out"
+}
