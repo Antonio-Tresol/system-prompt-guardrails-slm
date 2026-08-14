@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-An experiment testing whether Markdown-formatted system prompts improve privacy-refusal behaviour in Gemma 3 SLMs (4B and 12B) deployed as RAG agents. The project spans data generation, model evaluation with SAE interpretability, and a LaTeX paper with grounded statistical analysis.
+An experiment testing whether Markdown-formatted system prompts improve privacy-refusal behaviour in Gemma 3 SLMs (4B and 12B) deployed as RAG agents. The project spans data generation, model evaluation with SAE interpretability, and reproducible statistical analysis of the committed results.
 
 ## Commands
 
@@ -19,11 +19,9 @@ uv run mi_sml_agent              # Interactive chat with the safety agent
 uv run run_evaluation            # Run MD vs Plain evaluation pipeline
 uv run judge_results --results <path>  # Backfill judge classifications on results
 
-# Paper (see paper/CLAUDE.md for full details)
-uv run python -m paper.scripts.run_all                    # Reproduce all statistical results
-uv run python paper/validation/validate_claims.py          # Validate paper claims vs raw data
-uv run python paper/validation/check_ai_language.py        # Flag AI-style writing in .tex files
-cd paper && docker run --rm -v "$(pwd -W):/work" -w //work texlive/texlive latexmk -outdir=out main.tex  # Compile paper (Docker, Windows)
+# Analysis
+uv run python -m analysis.run_all                          # Reproduce all statistical results
+uv run python analysis/validation/validate_claims.py       # Independent cross-check vs raw data
 ```
 
 ## Architecture
@@ -58,15 +56,16 @@ cd paper && docker run --rm -v "$(pwd -W):/work" -w //work texlive/texlive latex
 ```
 data_generation/universes/*.yaml  -->  KB Generator Agent  -->  Document chunks with privacy labels
 data_generation/questions/*.csv   -->  Evaluation Runner    -->  results/{4b,12b}/results.csv + traces/
-results/                          -->  Paper scripts        -->  Statistical claims in LaTeX
+results/                          -->  analysis scripts     -->  Statistical report
 ```
 
 ## Project Layout
 
 - `model_evaluation/` — Core agent, evaluation pipeline, SAE integration, tracing
 - `data_generation/` — Universe YAMLs, question CSVs, prompt templates (see `data_generation/README.md`)
-- `paper/` — LaTeX source, analysis scripts, trace analysis, validation (see `paper/CLAUDE.md`)
-- `results/` — Evaluation outputs: `{4b,12b}/results.csv`, `traces/`, `sae_features/`, `kb_cache.json`
+- `analysis/` — Statistical analysis scripts (run via `python -m analysis.run_all`) and validation
+- `figures/` — Figures generated from the results
+- `results/` — Evaluation outputs: `{4b,12b}/results.csv`, `kb_cache.json` (traces and SAE features are generated locally, not committed)
 - `tests/` — pytest suite mirroring source structure
 - `utils/logging.py` — Loguru logging configuration
 
@@ -103,12 +102,3 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on PRs and pushes to `main`: ru
 
 - **LangChain / LangGraph**: Always consult latest docs via MCP server when modifying agent code
 - **Ruff**: `line-length = 100`, target `py312`, Google docstrings
-
-## Skills
-
-Skills in `.claude/skills/`:
-
-- `/alphaxiv-paper-lookup` — Look up arxiv papers on alphaxiv.org for structured overviews
-- `/building-agents-with-modern-langchain` — LangChain/LangGraph agent patterns
-- `/gemma-2-scope` — Gemma Scope 2 SAE feature extraction and analysis
-- `/convert-py-to-notebook` — Convert Python scripts to Jupyter notebooks

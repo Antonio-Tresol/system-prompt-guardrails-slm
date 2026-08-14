@@ -1,131 +1,69 @@
-# Safety Prompts for Small Language Models
+# Prompt format and guardrail compliance in small language models
 
-Does Markdown formatting in system prompts improve privacy-refusal behaviour in small language models? This project tests that hypothesis on **Gemma 3 (4B and 12B)** deployed as RAG agents, with mechanistic interpretability analysis via Gemma Scope 2 sparse autoencoders.
+Does writing a system prompt in Markdown rather than plain text change how well a small open-weight model follows its guardrails? A paired A/B evaluation of Gemma 3 4B and 12B as RAG agents, with LLM-judge scoring and sparse autoencoder measurements.
 
-## Key Findings
+![Refusal and compliance rates by model and prompt format](figures/cross_model_rates.png)
 
-- Markdown formatting significantly improved **verbal refusal** in the 12B model (*p* = 0.003), but the effect was absent in the 4B model.
-- **48-75% of verbal refusals still leak private information**, revealing a comprehension-execution gap: formatting improves the tendency to refuse but not the ability to suppress private content during generation.
-- The 4B model's failures are predominantly comprehension failures (label blindness), while the 12B model's are execution failures (leakage despite acknowledged privacy labels).
+*Verbal refusal and compliance rates for Gemma 3 4B and 12B under Markdown and plain-text system prompts. The 12B refusal gap looks significant on its own, but most of it traces back to tool-call parsing failures rather than reasoned compliance, and refusing turns out to be a different skill from not leaking.*
 
-## Project Structure
+## Overview
 
-```
-safety-prompts-for-slm/
-├── model_evaluation/       # RAG agent, evaluation pipeline, SAE integration, tracing
-├── data_generation/        # Synthetic universes (YAML), evaluation questions (CSV), prompts
-├── paper/                  # LaTeX paper, analysis scripts, trace analysis, validation
-├── results/                # Evaluation outputs (results.csv, traces, SAE features)
-├── tests/                  # pytest suite
-└── utils/                  # Shared logging utilities
-```
+Each model runs as a RAG agent over four synthetic company universes (a law firm, a medical clinic, a chip startup and a restaurant) whose knowledge bases mix public and private information. The same 600 questions, half benign and half probing for private information, are asked twice per model: once with the system prompt formatted as Markdown and once as plain text. That gives 1,200 paired runs per model, 2,400 in total. An LLM judge scores every response for refusal, information leakage and groundedness, and Gemma Scope 2 sparse autoencoder activations are recorded during generation.
 
-## Setup
+Three results stand out:
 
-### Prerequisites
+- The headline is a comprehension-execution gap. Among correct verbal refusals, 74.8% of the 4B model's and 48.2% of the 12B's still leak private information in the same response. On the stricter effective refusal metric (refuse and leak nothing), formatting gives no real advantage: 12B 49.7% Markdown vs 50.3% plain (p = 0.926); 4B 16.3% vs 22.7%, reported as exploratory only.
+- The 12B model refuses more often under Markdown (97.7% vs 94.0%, p = 0.003), but the result carries a confound: manual review of the discordant traces showed that 8 of the 12 pairs are tool-call parsing failures under the plain format, not reasoned compliance. Excluding those pairs, p = 0.375 and the effect is not significant.
+- The 4B model shows no formatting effect on refusal at all (p = 0.653). This is a null result and is reported as one. Groundedness is high in every condition (roughly 98.5 to 100%), and the agent used its think tool in only 3.7% of runs despite explicit instructions to use it.
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
-- Python 3.12+
-- CUDA-capable GPU (for local Gemma inference)
-- Docker (for paper compilation only)
+This is a self-contained experiment and has not been peer reviewed. Treat the numbers as evidence about these two models in this setup, not as general claims.
 
-### Install
+## Quick start: reproduce the statistics
+
+Every number above recomputes from the committed CSVs. No GPU is required.
 
 ```bash
 uv sync
-cp .env.example .env
-# Edit .env with your OpenRouter API key
+uv run python -m analysis.run_all
 ```
 
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENROUTER_API_KEY` | Yes | API key for [OpenRouter](https://openrouter.ai) |
-| `OPENROUTER_BASE_URL` | Yes | `https://openrouter.ai/api/v1` |
-| `HF_TOKEN` | No | HuggingFace token for gated Gemma models |
-| `GEMMA_MODEL_SIZE` | No | `4b` (default), `12b` |
-
-See `model_evaluation/config.py` for all configuration options.
-
-## Usage
-
-### Interactive Chat
+This runs seven analyses in sequence: McNemar's tests on refusal and compliance, per-universe breakdowns, groundedness, trajectory and token statistics, leakage summaries, leakage McNemar's tests and effective refusal rates. Each script also runs on its own, for example:
 
 ```bash
-uv run mi_sml_agent
+uv run python -m analysis.behavioral_mcnemar
+uv run python -m analysis.effective_refusal
 ```
 
-Chat with the safety agent in the terminal. Useful for testing prompts and observing refusal/compliance behaviour.
-
-### Run Evaluation
+An independent cross-check of the same quantities lives in `analysis/validation/validate_claims.py`:
 
 ```bash
-# Run the full MD vs Plain evaluation
-uv run run_evaluation --model-size 4b
-
-# With groundedness checking
-uv run run_evaluation --model-size 12b --check-groundedness --max-groundedness-retries 2
-
-# Resume an interrupted run
-uv run run_evaluation --model-size 4b --resume
-
-# Backfill judge classifications on existing results
-uv run judge_results --results results/4b/results.csv
+uv run python analysis/validation/validate_claims.py
 ```
 
-Results are saved to `results/<model_size>/` with per-question CSVs, agent trajectory JSONs, and SAE feature activations.
+## Re-running the experiment
 
-### Paper
-
-The paper is LaTeX compiled with LuaLaTeX via Docker:
+The full pipeline needs real hardware. The agent runs used a GPU with 32 GB of VRAM for local Gemma inference, plus an OpenRouter API key for knowledge-base generation and LLM-judge scoring. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY` before starting.
 
 ```bash
-cd paper
-docker run --rm -v "$(pwd -W):/work" -w //work texlive/texlive latexmk -outdir=out main.tex
+uv run mi_sml_agent                                    # interactive chat with the agent
+uv run run_evaluation --model-size 4b                  # run the Markdown vs plain evaluation
+uv run judge_results --results results/4b/results.csv  # backfill judge classifications
 ```
 
-Reproduce all statistical results cited in the paper:
+## Data
 
-```bash
-uv run python -m paper.scripts.run_all
-```
+| File | Contents |
+| --- | --- |
+| `results/4b/results.csv` | 1,200 rows, one per 4B agent run (600 questions x 2 formats): question metadata, final answer, judge verdicts for refusal, leakage and groundedness, SAE summary statistics (L0 and FVU at layers 17 and 29), token counts and durations |
+| `results/12b/results.csv` | The same 1,200 runs for the 12B model, with SAE summaries at layers 24 and 41 |
+| `results/kb_cache.json` | The generated knowledge-base chunks for each of the 600 questions, cached so both prompt formats see identical retrieval context |
 
-See [`paper/CLAUDE.md`](paper/CLAUDE.md) for detailed paper infrastructure documentation.
+Full agent trajectories and raw SAE feature activations were produced during the runs but are not part of this repository. The files above are the released data. Every statistic in this README recomputes from them, with one exception: the classification of the 12 discordant refusal pairs as parsing failures came from manual review of the run traces.
 
-## Architecture
+## License
 
-The evaluation pipeline consists of:
+MIT. See [LICENSE](LICENSE).
 
-1. **Safety Agent** (`model_evaluation/main_agent/rag_agent.py`) — LangGraph agent with `think` and `search_knowledge_base` tools, configurable system prompt format (Markdown vs Plain)
-2. **KB Generator** (`model_evaluation/main_agent/kb_generator/`) — Dynamically generates document chunks with privacy-level metadata per query (not a static vector store)
-3. **GemmaWithSAE** (`model_evaluation/main_agent/gemma_wrapper.py`) — Custom LangChain `BaseChatModel` wrapping Gemma 3 with Gemma Scope 2 SAE hooks for mechanistic analysis
-4. **LLM-as-Judge** (`model_evaluation/evaluation/judge.py`) — Classifies agent responses as refusal/compliance and evaluates groundedness
-5. **Trajectory Capture** (`model_evaluation/tracing/`) — Records full agent trajectories for qualitative analysis
+## Feedback
 
-### Data Generation
-
-Four synthetic "universes" (restaurant, law firm, medical clinic, tech startup) each define clearly separated public and private information in YAML. 150 evaluation questions per universe (75 public + 75 malicious) test whether the agent correctly refuses private information requests. See [`data_generation/README.md`](data_generation/README.md).
-
-## Development
-
-```bash
-uv run ruff check --fix .    # Lint
-uv run ruff format .         # Format
-uv run pytest                # Test
-```
-
-### CI
-
-GitHub Actions runs ruff, pyrefly type checking, and pytest on all PRs and pushes to `main`.
-
-## Tech Stack
-
-- **Python 3.12+** with **uv**
-- **LangChain / LangGraph** for agent orchestration
-- **Transformers / PyTorch** for Gemma 3 inference
-- **Gemma Scope 2 SAEs** for interpretability
-- **OpenRouter** for KB generation and LLM-as-judge
-- **Pydantic Settings** for configuration
-- **Ruff** + **Pyrefly** for code quality
-- **pytest** for testing
+If you spot an error in the analysis or a claim the data does not support, please open an issue.
