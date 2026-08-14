@@ -3,7 +3,6 @@ __pycache__/
 *.py[codz]
 *$py.class
 .langgraph_api/
-data_generation/papers/*
 .vscode/
 # C extensions
 *.so
@@ -204,12 +203,6 @@ cython_debug/
 
 # Ruff stuff:
 .ruff_cache/
-# Data folder - ignore contents but keep structure
-data/cookbooks/*
-data/papers/*
-data/vector_db/
-!data/cookbooks/.gitkeep
-!data/papers/.gitkeep
 # PyPI configuration file
 .pypirc
 
@@ -225,15 +218,8 @@ __marimo__/
 data_generation/outputs/
 data_generation/prompt_templates/
 data_generation/data_generation
-data_generation/papers/paper_pdfs
 
-# Knowledge base vector DB
-knowledge_base/vectordb/chroma_db/
-knowledge_base/vectordb/file_tracker.json
-data_generation/papers/2510.18234.pdf
-tests/audit_results_1.0.csv
 .agent/
-gemmascope2_paper.md
 
 # Evaluation results — track CSVs and KB cache, ignore heavy binary data
 model_evaluation/evaluation_results/
